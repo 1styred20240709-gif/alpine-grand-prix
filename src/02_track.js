@@ -1,23 +1,37 @@
 
 // =====================================================================
-// TRACK — Lac des Cimes Circuit
-// Catmull-Rom centreline -> arc-length samples -> parallel-transport frames
-// with designed banking -> custom BufferGeometry surfaces + collision data.
+// TRACK — Nürburgring Nordschleife (20.7 km)
+// Real centreline + elevation (see 02a_nordschleife.js) -> Catmull-Rom spline
+// -> arc-length samples -> parallel-transport frames with banking -> custom
+// BufferGeometry surfaces + collision data. Built in ~2 km chunks so that
+// frustum culling and shadow passes only touch nearby track.
 // =====================================================================
-// [x, z, elevation, width, bank magnitude (deg)]  (x,z scaled by TRACK_SCALE)
-const TRACK_CP = [
-  [0, -420, 0, 16, 0], [0, -150, 0, 16, 0], [0, 150, 0, 16, 0], [0, 420, 0, 16, 0],
-  [-6, 520, 0.5, 15, 3], [-50, 572, 1, 15, 4], [-108, 556, 1.5, 15, 4], [-130, 495, 2, 14, 2],
-  [-138, 410, 3, 14, 0], [-168, 330, 4, 14, 2], [-238, 300, 5, 14, 2], [-312, 336, 6, 14, 2],
-  [-400, 340, 8, 14, 3], [-488, 290, 11, 14, 5], [-548, 196, 14, 14, 5], [-566, 90, 16, 14, 3],
-  [-520, 8, 17, 14, 2], [-556, -80, 18, 14, 2], [-622, -142, 21, 14, 2], [-690, -116, 24, 14, 3],
-  [-752, -158, 27, 14, 3], [-812, -196, 30, 14, 3], [-830, -270, 31, 14, 2], [-790, -340, 30, 14, 3], [-712, -372, 27, 14, 2],
-  [-650, -432, 23, 14, 2], [-560, -470, 19, 14, 0], [-410, -548, 12, 14, 0], [-260, -610, 6, 14, 0], [-130, -650, 3, 14, 0],
-  [-60, -668, 2, 14, 1], [0, -640, 1.5, 14, 1], [60, -668, 1, 14, 1], [150, -680, 0.5, 14, 2],
-  [222, -640, 0.3, 14, 3], [232, -566, 0.2, 14, 3], [188, -522, 0.1, 14, 2], [120, -540, 0, 14, 1],
-  [62, -556, 0, 14, 2], [18, -520, 0, 15, 2]
-];
-const TRACK_SCALE = 1.22;
+// Per-section width (m) and bank magnitude (deg); everything else uses the defaults.
+const SECTION_STYLE = {
+  'Döttinger Höhe': { w: 12 }, 'Nürburgring Nordschleife': { w: 12 }, 'Antoniusbuche': { w: 11 },
+  'T13': { w: 11 }, 'Sabine-Schmitz-Kurve': { w: 11 }, 'Hohenrain': { w: 10.5 },
+  'Karussell': { w: 9, bank: 18 }, 'Mini-Karussell': { w: 9.5, bank: 7 }, 'Steilstrecke': { w: 9.5 }, 'Hohe Acht': { w: 9.5 },
+  'Fuchsröhre': { w: 9.5 }, 'Bergwerk': { w: 9.5 }
+};
+const TRACK_START_S = 20578; // start/finish line on Döttinger Höhe (metres along the OSM centreline)
+const NORDS = (() => {
+  const xz = decodeI16(NORDS_DATA.xz), yy = decodeI16(NORDS_DATA.y), n = yy.length;
+  let x = [], z = [], y = [];
+  for (let i = 0; i < n; i++) { x.push(xz[i * 2] / 10); z.push(xz[i * 2 + 1] / 10); y.push(yy[i] / 10); }
+  const sm = (a, r, passes) => { for (let p = 0; p < passes; p++) { const b = a.slice(); for (let i = 0; i < n; i++) { let s = 0; for (let k = -r; k <= r; k++) s += b[(i + k + n) % n]; a[i] = s / (2 * r + 1); } } return a; };
+  x = sm(x, 1, 1); z = sm(z, 1, 1); y = sm(y, 3, 2); // DEM noise -> smooth vertical profile
+  const secs = NORDS_DATA.sections; let sp = 0;
+  const cp = [];
+  for (let i = 0; i < n; i++) {
+    while (sp + 1 < secs.length && secs[sp + 1][0] <= i) sp++;
+    const name = i < secs[0][0] ? secs[secs.length - 1][1] : secs[sp][1], st = SECTION_STYLE[name] || {};
+    cp.push([x[i], z[i], y[i], st.w || 10, st.bank != null ? st.bank : 2, name]);
+  }
+  const si0 = Math.round(TRACK_START_S / NORDS_DATA.step) % n;
+  return { cp, start: [x[si0], z[si0]] };
+})();
+const TRACK_CP = NORDS.cp;
+const TRACK_SCALE = 1;
 const SURF = { ROAD: 0, KERB: 1, EDGE: 2, RUNOFF: 3, GRASS: 4, GRAVEL: 5, PIT: 6, CONCRETE: 7 };
 const SURF_PROPS = [
   { name: 'Asphalt', mu: 1.00, rr: 0.012, drag: 0.0, bump: 0.0, noise: 0.0 },
@@ -36,7 +50,7 @@ class Track {
   constructor() {
     const pts = TRACK_CP.map(p => new THREE.Vector3(p[0] * TRACK_SCALE, p[2], p[1] * TRACK_SCALE));
     this.curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal');
-    this.curve.arcLengthDivisions = 6000;
+    this.curve.arcLengthDivisions = Math.max(6000, TRACK_CP.length * 48);
     this.length = this.curve.getLength();
     const N = this.N = Math.round(this.length / 2);
     this.ds = this.length / N;
@@ -48,14 +62,14 @@ class Track {
       const p = this.curve.getPoint(t), tg = this.curve.getTangent(t).normalize();
       const seg = t * ncp, k = Math.floor(seg) % ncp, f = smoothstep(0, 1, seg - Math.floor(seg));
       const a = TRACK_CP[k], b = TRACK_CP[(k + 1) % ncp];
-      raw.push({ p, t: tg, w: lerp(a[3], b[3], f), bank: lerp(a[4], b[4], f) * Math.PI / 180 });
+      raw.push({ p, t: tg, w: lerp(a[3], b[3], f), bank: lerp(a[4], b[4], f) * Math.PI / 180, name: f < 0.5 ? a[5] : b[5] });
     }
     // ---- re-base so sample 0 lies on the start/finish line (on the main straight)
     let best = 0, bd = Infinity;
-    const sf = new THREE.Vector3(0, 0, -180);
+    const sf = new THREE.Vector3(NORDS.start[0], 0, NORDS.start[1]);
     raw.forEach((r, i) => { const d = (r.p.x - sf.x) ** 2 + (r.p.z - sf.z) ** 2; if (d < bd) { bd = d; best = i; } });
     const S = []; for (let i = 0; i < N; i++) S.push(raw[(i + best) % N]);
-    this.P = S.map(r => r.p); this.T = S.map(r => r.t);
+    this.P = S.map(r => r.p); this.T = S.map(r => r.t); this.secName = S.map(r => r.name || '');
     this.halfW = new Float32Array(N); S.forEach((r, i) => this.halfW[i] = r.w / 2);
     const bankMag = new Float32Array(N); S.forEach((r, i) => bankMag[i] = r.bank);
     this._frames(bankMag);
@@ -126,13 +140,11 @@ class Track {
   // ---------------------------------------------------------------- surface zones
   _zones() {
     const N = this.N;
+    // start straight (Döttinger Höhe) is the stretch around s = 0; pit complex positions are offsets from the line
     this.mainStraight = new Uint8Array(N);
-    for (let i = 0; i < N; i++) { const p = this.P[i]; if (Math.abs(p.x) < 15 && p.z > -620 && p.z < 610) this.mainStraight[i] = 1; }
-    const sAtZ = (z) => { let b = 0, bd = 1e9; for (let i = 0; i < N; i++) if (this.mainStraight[i]) { const d = Math.abs(this.P[i].z - z); if (d < bd) { bd = d; b = i; } } return b * this.ds; };
-    this.pit = {
-      entry: sAtZ(-600), wallStart: sAtZ(-470), garStart: sAtZ(-150), garEnd: sAtZ(210), wallEnd: sAtZ(330), exit: sAtZ(430),
-      limitStart: sAtZ(-470), limitEnd: sAtZ(330)
-    };
+    for (let i = 0; i < N; i++) { const s = i * this.ds; if (this.inRange(s, -640, 630)) this.mainStraight[i] = 1; }
+    const W = (s) => this.wrapS(s);
+    this.pit = { entry: W(-420), wallStart: W(-290), garStart: W(30), garEnd: W(390), wallEnd: W(510), exit: W(610), limitStart: W(-290), limitEnd: W(510) };
     // kerbs where the smoothed curvature is significant
     this.kerbL = new Uint8Array(N); this.kerbR = new Uint8Array(N);
     const flag = new Uint8Array(N);
@@ -142,7 +154,8 @@ class Track {
   // ---------------------------------------------------------------- walls / runoff
   _walls() {
     const N = this.N;
-    const wantL = new Float32Array(N).fill(12), wantR = new Float32Array(N).fill(12);
+    const wantL = new Float32Array(N), wantR = new Float32Array(N);
+    for (let i = 0; i < N; i++) { wantL[i] = wantR[i] = this.halfW[i] + 3.2 + 1.5 * NOISE.noise(i * 0.004, 3.3) ** 2 * 4; }
     this.typeL = new Uint8Array(N).fill(SURF.GRASS); this.typeR = new Uint8Array(N).fill(SURF.GRASS);
     // corners: outside gravel / asphalt, inside grass
     const ks = this.kappaS;
@@ -151,12 +164,12 @@ class Track {
       const k = ks[i]; if (Math.abs(k) < 1 / 330) continue;
       const R = 1 / Math.abs(k);
       const cornerIdx = Math.floor(i / 60);
-      const outsideType = (cornerIdx % 3 === 1) ? SURF.RUNOFF : SURF.GRAVEL;
-      const outW = R < 70 ? 24 : 30;
+      const outsideType = (cornerIdx % 5 === 2) ? SURF.GRAVEL : (cornerIdx % 5 === 4) ? SURF.RUNOFF : SURF.GRASS;
+      const outW = this.halfW[i] + (R < 70 ? 7 : 10);
       for (let d = -22; d <= 22; d++) {
         const j = (i + d + N) % N;
-        if (k > 0) { wantR[j] = Math.max(wantR[j], outW); this.typeR[j] = outsideType; wantL[j] = Math.max(9, Math.min(wantL[j], 10)); }
-        else { wantL[j] = Math.max(wantL[j], outW); this.typeL[j] = outsideType; wantR[j] = Math.max(9, Math.min(wantR[j], 10)); }
+        if (k > 0) { wantR[j] = Math.max(wantR[j], outW); this.typeR[j] = outsideType; }
+        else { wantL[j] = Math.max(wantL[j], outW); this.typeL[j] = outsideType; }
       }
       ci++;
     }
@@ -251,13 +264,14 @@ class Track {
     this.rlX = px; this.rlZ = pz;
   }
   // speed profile for a given grip coefficient (used by AI)
-  speedProfile(mu) {
-    const N = this.N, v = new Float32Array(N), m = 798, rho = 1.225, ClA = 4.4, CdA = 1.4, P = 690000, g = 9.81;
+  speedProfile(mu, car) {
+    const c = car || { mass: 1500, ClA: 0.3, CdA: 0.8, peakPower: 350000, vmax: 85, driveFront: 0.3 };
+    const N = this.N, v = new Float32Array(N), m = c.mass, rho = 1.225, ClA = c.ClA, CdA = c.CdA, P = c.peakPower, g = 9.81, vcap = c.vmax;
     const ka = 0.5 * rho * ClA / m;
     for (let i = 0; i < N; i++) {
       const kk = Math.abs(this.rlK[i]);
       const den = kk - mu * ka;
-      v[i] = den <= 1e-6 ? 92 : Math.min(92, Math.sqrt(mu * g / den));
+      v[i] = den <= 1e-6 ? vcap : Math.min(vcap, Math.sqrt(mu * g / den));
     }
     for (let pass = 0; pass < 2; pass++) {
       for (let n = 0; n < N * 2; n++) { // braking (backwards)
@@ -281,15 +295,21 @@ class Track {
   _sectors() {
     const L = this.length;
     this.sectorS = [0, L * 0.34, L * 0.68];
-    this.checkpoints = []; for (let k = 1; k < 16; k++) this.checkpoints.push(L * k / 16);
-    // DRS: zone A main straight, zone B back straight
-    const near = (x, z) => { let b = 0, bd = 1e12; for (let i = 0; i < this.N; i++) { const d = (this.P[i].x - x) ** 2 + (this.P[i].z - z) ** 2; if (d < bd) { bd = d; b = i; } } return b * this.ds; };
-    const backA = near(-560 * TRACK_SCALE, -470 * TRACK_SCALE), backB = near(-130 * TRACK_SCALE, -650 * TRACK_SCALE);
-    this.drsZones = [
-      { detect: this.wrapS(this.pit.entry - 260), start: this.wrapS(this.pit.entry + 60), end: this.wrapS(this.pit.exit + 20) },
-      { detect: this.wrapS(backA - 120), start: this.wrapS(backA + 30), end: this.wrapS(backB - 40) }
-    ];
+    this.cpCount = 64; // ordered checkpoints every ~325 m
+    this.checkpoints = []; for (let k = 1; k < this.cpCount; k++) this.checkpoints.push(L * k / this.cpCount);
+    // DRS (only cars with an active rear wing use it): zone A = Döttinger Höhe, zone B = longest other straight
+    const N = this.N, straight = new Uint8Array(N);
+    for (let i = 0; i < N; i++) straight[i] = Math.abs(this.kappaS[i]) < 1 / 900 ? 1 : 0;
+    let best = null, run = null;
+    for (let n = 0; n < N * 2; n++) {
+      const i = n % N;
+      if (straight[i] && !this.mainStraight[i]) { if (!run) run = { a: n, b: n }; else run.b = n; }
+      else if (run) { if (!best || run.b - run.a > best.b - best.a) best = run; run = null; if (n >= N) break; }
+    }
+    this.drsZones = [{ detect: this.wrapS(-680), start: this.wrapS(-360), end: this.wrapS(630) }];
+    if (best && (best.b - best.a) * this.ds > 450) { const a = best.a * this.ds, b = best.b * this.ds; this.drsZones.push({ detect: this.wrapS(a - 150), start: this.wrapS(a + 40), end: this.wrapS(b - 60) }); }
   }
+  sectionAt(s) { return this.secName[this.idxAt(s)] || ''; }
   // ---------------------------------------------------------------- queries
   nearest(x, z, hint) {
     const N = this.N;
@@ -366,15 +386,16 @@ class Track {
   // ---------------------------------------------------------------- mesh construction
   // Generic strip: cols lateral positions per row from colFn(i) -> [u...], liftFn optional
   _strip(opts) {
-    const N = this.N, cols = opts.cols; const rows = N + 1;
+    // rows R0..R1+1 only (the current chunk); r below is the global row index so UVs stay continuous
+    const N = this.N, cols = opts.cols, R0 = this._rows ? this._rows[0] : 0, R1 = this._rows ? this._rows[1] : N - 1; const rows = R1 - R0 + 2;
     const pos = new Float32Array(rows * cols * 3), nor = new Float32Array(rows * cols * 3), uv = new Float32Array(rows * cols * 2);
     const col = opts.color ? new Float32Array(rows * cols * 3) : null;
     const texLen = this.length / Math.max(1, Math.round(this.length / (opts.texLen || 16)));
-    for (let r = 0; r < rows; r++) {
-      const i = r % N, C = this.P[i], L = this.L[i], U = this.U[i];
+    for (let rr = 0; rr < rows; rr++) {
+      const r = R0 + rr, i = r % N, C = this.P[i], L = this.L[i], U = this.U[i];
       for (let c = 0; c < cols; c++) {
         const [u, lift, uu, nOverride] = opts.vert(i, c);
-        const k = r * cols + c;
+        const k = rr * cols + c;
         pos[k * 3] = C.x + L.x * u + U.x * lift; pos[k * 3 + 1] = C.y + L.y * u + U.y * lift; pos[k * 3 + 2] = C.z + L.z * u + U.z * lift;
         const n = nOverride || U; nor[k * 3] = n.x; nor[k * 3 + 1] = n.y; nor[k * 3 + 2] = n.z;
         uv[k * 2] = uu; uv[k * 2 + 1] = (r * this.ds) / texLen;
@@ -382,11 +403,12 @@ class Track {
       }
     }
     const idx = [];
-    for (let r = 0; r < N; r++) {
+    for (let rr = 0; rr < rows - 1; rr++) {
+      const r = (R0 + rr) % N;
       if (opts.include && !opts.include(r)) continue;
       for (let c = 0; c < cols - 1; c++) {
         if (opts.skipCol && opts.skipCol(r, c)) continue;
-        const a = r * cols + c, b = (r + 1) * cols + c, cc = r * cols + c + 1, d = (r + 1) * cols + c + 1;
+        const a = rr * cols + c, b = (rr + 1) * cols + c, cc = rr * cols + c + 1, d = (rr + 1) * cols + c + 1;
         if (opts.flip) idx.push(a, cc, b, cc, d, b); else idx.push(a, b, cc, cc, b, d);
       }
     }
@@ -414,10 +436,20 @@ class Track {
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
     g.setIndex(idx); return g;
   }
-  buildMeshes(M) {
-    const group = new THREE.Group(); group.name = 'track';
-    const N = this.N, self = this;
-    const add = (g, mat, opts = {}) => { const m = new THREE.Mesh(g, mat); m.receiveShadow = true; m.castShadow = !!opts.cast; if (opts.order) m.renderOrder = opts.order; group.add(m); return m; };
+  buildMeshes(M, low = false) {
+    const root = new THREE.Group(); root.name = 'track';
+    const CH = low ? 400 : 1000; // samples per chunk (~2 km; ~0.8 km on low-detail devices, which also distance-cull them)
+    for (let r0 = 0; r0 < this.N; r0 += CH) {
+      this._rows = [r0, Math.min(this.N - 1, r0 + CH - 1)];
+      const g = new THREE.Group(); g.name = 'track-chunk'; this._buildChunk(g, M); mergeStaticByMaterial(g); root.add(g);
+    }
+    this._rows = null;
+    const mk = new THREE.Group(); mk.name = 'track-markings'; this._markings(mk, M); mergeStaticByMaterial(mk); root.add(mk);
+    return root;
+  }
+  _buildChunk(group, M) {
+    const N = this.N;
+    const add = (g, mat, opts = {}) => { if (!g.index || g.index.count === 0) { g.dispose(); return null; } const m = new THREE.Mesh(g, mat); m.receiveShadow = true; m.castShadow = !!opts.cast; if (opts.order) m.renderOrder = opts.order; group.add(m); return m; };
     // ---- racing surface: 13 lateral columns, vertex colour = rubber deposits along racing line
     const RC = 13;
     add(this._strip({
@@ -463,10 +495,6 @@ class Track {
     }
     // ---- barriers
     this._barriers(group, M);
-    // ---- markings
-    this._markings(group, M);
-    this.mergedDraws = mergeStaticByMaterial(group);
-    return group;
   }
   _barriers(group, M) {
     const N = this.N;
@@ -481,7 +509,8 @@ class Track {
       railGeos.push(this._strip({ cols: 5, texLen: 4, computeNormals: true, flip: side < 0, vert: (i, c) => [side * (wall[i] + rprof[c][0]), rprof[c][1], c / 4], include: (r) => !style[r] }));
       // catch fence (debris fence) on top of everything
       fenceGeos.push(this._strip({ cols: 2, texLen: 3, flip: side < 0, vert: (i, c) => [side * (wall[i] + 0.3), style[i] ? (c ? 4.2 : 1.1) : (c ? 3.4 : 0.9), c ? 1.0 : 0.0] }));
-      for (let i = 0; i < N; i += 2) {
+      const [R0, R1] = this._rows || [0, N - 1];
+      for (let i = R0 - (R0 % 2); i <= R1; i += 2) {
         const f = this.frameAt(i * this.ds, side * (wall[i] + 0.35));
         if (!style[i]) postMatrices.push([f.pos.x, f.pos.y, f.pos.z, 0.9]);
         if (i % 3 === 0) postMatrices.push([f.pos.x, f.pos.y, f.pos.z, style[i] ? 4.3 : 3.5]);
@@ -491,13 +520,15 @@ class Track {
     const pw = this._strip({ cols: 4, texLen: 6, computeNormals: true, vert: (i, c) => { const pr = [[0, 0], [0, 1.1], [0.5, 1.1], [0.5, 0]]; return [PIT.wallU + pr[c][0], pr[c][1], c / 3]; }, include: (r) => this.mainStraight[r] && this.inRange(r * this.ds, this.pit.wallStart, this.pit.wallEnd) });
     concreteGeos.push(pw);
     fenceGeos.push(this._strip({ cols: 2, texLen: 3, vert: (i, c) => [PIT.wallU + 0.25, c ? 3.6 : 1.1, c], include: (r) => this.mainStraight[r] && this.inRange(r * this.ds, this.pit.wallStart, this.pit.wallEnd) }));
-    for (const g of concreteGeos) { const m = new THREE.Mesh(g, M.wall); m.castShadow = true; m.receiveShadow = true; group.add(m); }
-    for (const g of railGeos) { const m = new THREE.Mesh(g, M.armco); m.castShadow = true; m.receiveShadow = true; group.add(m); }
-    for (const g of fenceGeos) { const m = new THREE.Mesh(g, M.fence); group.add(m); }
+    for (const g of concreteGeos) { if (!g.index || !g.index.count) continue; const m = new THREE.Mesh(g, M.wall); m.castShadow = true; m.receiveShadow = true; group.add(m); }
+    for (const g of railGeos) { if (!g.index || !g.index.count) continue; const m = new THREE.Mesh(g, M.armco); m.castShadow = true; m.receiveShadow = true; group.add(m); }
+    for (const g of fenceGeos) { if (!g.index || !g.index.count) continue; const m = new THREE.Mesh(g, M.fence); group.add(m); }
+    if (postMatrices.length) {
     const post = new THREE.CylinderGeometry(0.06, 0.06, 1, 6); post.translate(0, 0.5, 0);
     const posts = new THREE.InstancedMesh(post, M.metal, postMatrices.length);
     postMatrices.forEach((p, k) => { _m4.compose(_v1.set(p[0], p[1], p[2]), _q.identity(), _v2.set(1, p[3], 1)); posts.setMatrixAt(k, _m4); });
     posts.computeBoundingSphere(); posts.castShadow = true; group.add(posts);
+    }
   }
   _markings(group, M) {
     const white = [], yellow = [];

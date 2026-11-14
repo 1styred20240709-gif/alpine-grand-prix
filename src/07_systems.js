@@ -132,7 +132,7 @@ class RaceManager {
       // ordered checkpoints (must be passed in sequence)
       if (!fwdCross && !backCross && e.cpNext < this.cps.length) {
         const cp = this.cps[e.cpNext];
-        if (prev < cp && s >= cp && s - prev < 60) { this._cp(e, e.lapsDone * 16 + e.cpNext); e.cpNext++; }
+        if (prev < cp && s >= cp && s - prev < 60) { this._cp(e, e.lapsDone * this.track.cpCount + e.cpNext); e.cpNext++; }
       }
       // sectors
       for (let k = 1; k < 3; k++) {
@@ -191,7 +191,7 @@ class RaceManager {
         if (e.isPlayer && this.mode !== 'race') this.g.flash('PERSONAL BEST', fmtTime(lap));
       }
       if (this.bestLapAll == null || lap < this.bestLapAll) this.bestLapAll = lap;
-      this._cp(e, e.lapsDone * 16);
+      this._cp(e, e.lapsDone * this.track.cpCount);
     } else if (e.isPlayer) this.g.flash('LAP INVALID', 'CHECKPOINT MISSED');
     e.lapStart = now; e.secStart = now; e.sector = 0; e.cpNext = 1; e.valid = true; e.trace = []; e.curSec = [null, null, null]; e.secState = ['', '', ''];
     if (this.mode === 'race' && e.lapsDone >= this.totalLaps) {
@@ -229,7 +229,7 @@ class CameraRig {
     this.prevVel.copy(vel);
     const speed = vel.length(), longA = this.acc.dot(fwd), latA = this.acc.dot(_v3.set(0, 1, 0).applyQuaternion(quat).cross(fwd));
     if (this.mode === 'cockpit') {
-      const S = this._s, eye = S.eye.copy(CAR.eye); eye.y -= CAR.cgH;
+      const S = this._s, eye = S.eye.copy(this.P.eye); eye.y -= this.P.cgH;
       cam.position.copy(eye.applyQuaternion(quat).add(pos));
       const look = S.lookQ.setFromEuler(S.lookE.set(-0.03 + clamp(longA * 0.0012, -0.02, 0.02), Math.PI + steer * 0.10, 0, 'YXZ'));
       this.roll = lerp(this.roll, clamp(-latA * 0.0025, -0.04, 0.04), 1 - Math.exp(-dt * 5));
@@ -380,7 +380,7 @@ class AudioSys {
   update(st) {
     if (!this.ctx || this.ctx.state !== 'running') return;
     const t = this.ctx.currentTime, tc = 0.03;
-    const f0 = Math.max(st.rpm, 1500) / 60 * 3; // V6 firing frequency
+    const f0 = Math.max(st.rpm, 600) / 60 * (st.cyl || 6) / 2; // firing frequency: I4 = 2 / rev, six-cylinder = 3 / rev
     for (const o of this.oscs) o.o.frequency.setTargetAtTime(f0 * o.m, t, 0.012);
     const load = st.throttle;
     this.engLP.frequency.setTargetAtTime(500 + load * 4200 + st.rpm * 0.25, t, tc);
@@ -450,10 +450,13 @@ class HUD {
     for (const z of track.drsZones) { c.beginPath(); let s = z.start; let first = true; while (track.inRange(s, z.start, z.end)) { const f = track.frameAt(s, 0); const [x, y] = tp(f.pos.x, f.pos.z); first ? c.moveTo(x, y) : c.lineTo(x, y); first = false; s += 10; if (s - z.start > 2000) break; } c.strokeStyle = '#25e05d'; c.lineWidth = 3; c.stroke(); }
     // start line + corner numbers
     const f0 = track.frameAt(0, 0); const [sx, sy] = tp(f0.pos.x, f0.pos.z); c.fillStyle = '#fff'; c.fillRect(sx - 9, sy - 2, 18, 4);
-    c.font = '700 15px Arial'; c.fillStyle = 'rgba(255,255,255,0.75)'; c.textAlign = 'center'; c.textBaseline = 'middle';
-    for (const cn of track.corners) { const i = cn.apex, p = P[i], L = track.L[i]; const side = cn.sign > 0 ? -1 : 1; const [x, y] = tp(p.x + L.x * side * 34, p.z + L.z * side * 34); c.fillText(String(cn.num), x, y); }
+    c.font = '600 13px Arial'; c.fillStyle = 'rgba(255,255,255,0.8)'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    for (const name of ['Flugplatz', 'Fuchsröhre', 'Bergwerk', 'Karussell', 'Brünnchen', 'Schwalbenschwanz', 'Hatzenbach']) {
+      const i = track.secName.indexOf(name); if (i < 0) continue; const p = P[i]; const [x, y] = tp(p.x, p.z);
+      c.beginPath(); c.arc(x, y, 3, 0, TAU); c.fill(); c.fillText(name, x, y + (y > this.mm.W / 2 ? 13 : -12));
+    }
   }
-  toMap(x, z) { const m = this.mm; return [m.W / 2 - (x - m.cx) * m.sc, m.W / 2 - (z - m.cz) * m.sc]; }
+  toMap(x, z) { const m = this.mm; return [m.W / 2 + (x - m.cx) * m.sc, m.W / 2 + (z - m.cz) * m.sc]; } // north-up (+x east, +z south)
   show(v) { this.el.root.classList.toggle('hidden', !v); }
   message(title, sub, dur = 2.2) { this.el.msg.innerHTML = title + (sub ? '<small>' + sub + '</small>' : ''); this.el.msg.classList.add('show'); this.msgT = dur; }
   update(dt, G) {
@@ -473,15 +476,15 @@ class HUD {
       if (c === p) continue; const [x, y] = this.toMap(c.phys.pos.x, c.phys.pos.z);
       ctx.beginPath(); ctx.arc(x, y, 7, 0, TAU); ctx.fillStyle = c.colorCss; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = '#000'; ctx.stroke();
     }
-    { const [x, y] = this.toMap(ph.pos.x, ph.pos.z); const f = ph.forward; const a = Math.atan2(-f.x, -f.z);
+    { const [x, y] = this.toMap(ph.pos.x, ph.pos.z); const f = ph.forward; const a = Math.atan2(f.x, -f.z);
       ctx.save(); ctx.translate(x, y); ctx.rotate(a); ctx.beginPath(); ctx.moveTo(0, -14); ctx.lineTo(9, 9); ctx.lineTo(0, 4); ctx.lineTo(-9, 9); ctx.closePath(); ctx.fillStyle = '#ffd23f'; ctx.fill(); ctx.lineWidth = 2.5; ctx.strokeStyle = '#000'; ctx.stroke(); ctx.restore(); }
   }
   fastHud(G, ph) {
     const el = this.el;
     const rpm = ph.engine.rpm;
-    el.rpmbar.style.width = clamp(rpm / VP.maxRPM * 100, 0, 100) + '%';
-    const lit = Math.round(clamp((rpm - 9000) / 3000, 0, 1) * 15);
-    const flash = rpm > 12150;
+    const PP = ph.P; el.rpmbar.style.width = clamp(rpm / PP.maxRPM * 100, 0, 100) + '%';
+    const lit = Math.round(clamp((rpm - 0.72 * PP.cutRPM) / (0.26 * PP.cutRPM), 0, 1) * 15);
+    const flash = rpm > PP.cutRPM - 120;
     this.shiftLeds.forEach((l, i) => { l.className = i < lit ? (i < 5 ? 'g' : i < 10 ? 'r' : 'b') : ''; });
     el.shift.classList.toggle('flash', flash && (performance.now() % 140 < 70));
     el.thr.style.height = (ph.input.throttle * 100) + '%'; el.brk.style.height = (ph.input.brake * 100) + '%';
@@ -491,8 +494,10 @@ class HUD {
     el.spd.textContent = Math.round(kmh); el.rpm.textContent = Math.round(rpm / 10) * 10;
     el.gear.textContent = ph.engine.gear === -1 ? 'R' : ph.engine.shiftT > 0 ? '-' : ph.engine.gear;
     el.gear.style.color = ph.pitLimiter ? '#3fd0ff' : '';
-    el.trans.textContent = ph.engine.auto ? 'AUTO' : 'MANUAL'; el.assist.textContent = 'ABS ' + (ph.assist.abs ? 'ON' : 'OFF') + ' · TC ' + (ph.assist.tc ? 'ON' : 'OFF') + ' · BB ' + Math.round(ph.assist.bias * 100) + (ph.pitLimiter ? ' · PIT LIMITER' : '');
+    el.trans.textContent = ph.P.spec.gearboxLabel; el.assist.textContent = 'ABS ' + (ph.assist.abs ? 'ON' : 'OFF') + ' · ESC/TC ' + (ph.assist.tc ? (ph.escActive ? 'ACTIVE' : 'ON') : 'OFF') + ' · BB ' + Math.round(ph.assist.bias * 100) + (ph.pitLimiter ? ' · PIT LIMITER' : '');
     const drsState = G.drsState();
+    el.drs.style.display = ph.P.hasDRS ? '' : 'none';
+    if (!this._tDrs) this._tDrs = document.getElementById('t-drs'); if (this._tDrs) this._tDrs.style.visibility = ph.P.hasDRS ? '' : 'hidden';
     el.drs.className = 'badge ' + (drsState === 'ACTIVE' ? 'active' : drsState === 'AVAILABLE' ? 'avail' : '');
     el.drs.textContent = 'DRS ' + drsState;
     // session / position / lap
@@ -500,7 +505,7 @@ class HUD {
     el.pos.textContent = r.mode === 'race' ? 'P' + e.pos : r.mode === 'tt' ? 'TT' : 'FP';
     el.lap.textContent = r.mode === 'race' ? Math.max(1, Math.min(r.totalLaps, e.lapsDone + 1)) + ' / ' + r.totalLaps : String(Math.max(1, e.lapsDone + 1));
     const st = { grid: 'Formation', lights: 'Start procedure', running: r.mode === 'race' ? 'Race · ' + n + ' cars' : r.mode === 'tt' ? 'Time trial' : 'Free practice', finishing: 'Chequered flag' }[r.state] || '';
-    el.session.textContent = e.finished ? 'Finished · P' + e.pos : st;
+    el.session.textContent = (e.finished ? 'Finished · P' + e.pos : st) + ' · ' + (G.track.sectionAt(ph.q.s) || '');
     el.lights.classList.toggle('hidden', !(r.state === 'grid' || r.state === 'lights'));
     this.lightEls.forEach((l, i) => l.classList.toggle('on', r.state === 'lights' && i < r.lights));
     // timing

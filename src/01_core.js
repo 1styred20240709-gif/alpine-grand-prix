@@ -218,7 +218,7 @@ const Tex = {
       ctx.save(); ctx.translate(0, y0); if (flip) { ctx.scale(1, -1); }
       ctx.fillStyle = compound; ctx.fillRect(0, flip ? -6 : 2, W, 4);
       ctx.font = 'bold 15px Arial'; ctx.fillStyle = '#d9d9d9'; ctx.textBaseline = 'middle';
-      for (let k = 0; k < 4; k++) { ctx.fillText('ALPINA', k * 256 + 40, flip ? -16 : 16); ctx.fillText('RACING SLICK', k * 256 + 128, flip ? -16 : 16); }
+      for (let k = 0; k < 4; k++) { ctx.fillText('VELOXA', k * 256 + 40, flip ? -16 : 16); ctx.fillText('SPORT CUP', k * 256 + 128, flip ? -16 : 16); }
       ctx.restore();
     };
     sidewall(Hh * 0.10, false); sidewall(Hh * 0.90, true);
@@ -249,7 +249,7 @@ const Tex = {
       ['VELOXA', 'FUEL SYSTEMS', '#0b1f4a', '#ffcc00'], ['GLACIERA', 'MOUNTAIN WATER', '#e8f4fb', '#0a6bb0'],
       ['KESTREL', 'TELECOM', '#141414', '#ff5a1f'], ['SUMMIT AIR', 'FLY HIGHER', '#0a6bb0', '#ffffff'],
       ['ARCLINE', 'PRECISION TECH', '#c8102e', '#ffffff'], ['ORBEX', 'LUBRICANTS', '#1d1d1d', '#39d353'],
-      ['LAC DES CIMES', 'GRAND PRIX', '#ffffff', '#c8102e'], ['NORVANE', 'TIMEPIECES', '#20150b', '#d4af37']];
+      ['GRÜNE HÖLLE', 'EIFEL TRACK DAYS', '#ffffff', '#1d7a3a'], ['NORVANE', 'TIMEPIECES', '#20150b', '#d4af37']];
     brands.forEach((b, i) => {
       const y = i * 128; ctx.fillStyle = b[2]; ctx.fillRect(0, y, W, 128);
       ctx.fillStyle = b[3]; ctx.font = 'italic 900 70px Arial'; ctx.textBaseline = 'middle';

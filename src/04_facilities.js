@@ -124,7 +124,7 @@ class Facilities {
     if (ads.length) { const m = new THREE.Mesh(mergeList(ads), M.ads); m.receiveShadow = true; this.group.add(m); }
     // ---------------- light towers
     const lt = [];
-    for (let s = 40; s < tr.length; s += 160) {
+    for (let s = -1400; s < 1400; s += 160) { // floodlights only around the start complex
       const i = tr.idxAt(s); const side = tr.kappaS[i] > 0 ? 1 : -1; // inside of the curve
       const wall = side > 0 ? tr.wallL[i] : tr.wallR[i], verge = side > 0 ? tr.vergeL[i] : tr.vergeR[i];
       if (verge < 4) continue;

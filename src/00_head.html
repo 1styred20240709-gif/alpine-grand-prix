@@ -128,6 +128,11 @@ h1 span{color:var(--accent)}
 .sub{color:var(--dim);margin:6px 0 20px;letter-spacing:.12em;font-size:12px;text-transform:uppercase}
 h2{font-size:13px;letter-spacing:.14em;color:var(--dim);text-transform:uppercase;margin:18px 0 8px;font-weight:700}
 .modes{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.cars{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.carcard{border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);padding:10px;border-radius:8px;text-align:left;cursor:pointer;font:inherit;display:flex;flex-direction:column;gap:3px}
+.carcard b{font-size:14px}.carcard span{font-size:11px;color:var(--dim)}.carcard.sel{border-color:var(--accent);background:rgba(225,6,0,.14)}
+.carcard .swatch{width:100%;height:6px;border-radius:3px;margin-bottom:4px}
+@media (max-width:900px){.cars{grid-template-columns:repeat(2,1fr)}}
 .mode{border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);padding:14px;border-radius:8px;text-align:left;cursor:pointer;font:inherit}
 .mode b{display:block;font-size:16px;margin-bottom:4px}.mode span{font-size:12px;color:var(--dim)}
 .mode.sel{border-color:var(--accent);background:rgba(225,6,0,.14)}
@@ -230,26 +235,27 @@ h2{font-size:13px;letter-spacing:.14em;color:var(--dim);text-transform:uppercase
 <div id="menu" class="screen hidden">
   <div class="card">
     <h1>ALPINE <span>GRAND PRIX</span></h1>
-    <div class="sub">Lac des Cimes Circuit · 5.0 km · 16 corners</div>
+    <div class="sub">Nürburgring Nordschleife · 20.8 km</div>
     <h2>Mode</h2>
     <div class="modes">
       <button class="mode sel" data-mode="race"><b>Race</b><span>Grid start against AI rivals</span></button>
       <button class="mode" data-mode="tt"><b>Time Trial</b><span>Chase your personal best</span></button>
       <button class="mode" data-mode="free"><b>Free Drive</b><span>Explore the circuit</span></button>
     </div>
+    <h2>Car <span style="text-transform:none;letter-spacing:0;font-weight:500">· all automatic</span></h2>
+    <div class="cars" id="cars"></div>
     <h2>Session</h2>
     <div class="grid">
-      <label class="field">Laps <input type="number" id="o-laps" min="1" max="30" value="3"></label>
+      <label class="field">Laps <input type="number" id="o-laps" min="1" max="5" value="1"></label>
+      <label class="field">Opponent cars <select id="o-field"><option value="same" selected>Same as mine</option><option value="mixed">Mixed line-up</option></select></label>
       <label class="field">AI opponents <select id="o-ai"><option>5</option><option>6</option><option selected>7</option><option>9</option></select></label>
       <label class="field">AI difficulty <select id="o-diff"><option value="0.9">Amateur</option><option value="0.95" selected>Pro</option><option value="1.0">Legend</option></select></label>
       <label class="field">Graphics <select id="o-quality"><option value="competitive">240 FPS Competitive</option><option value="high">High</option><option value="medium" selected>Medium</option><option value="performance">Low</option><option value="minimal">Ultra Low (old / integrated GPUs)</option></select></label>
       <label class="field">Auto-adjust graphics <select id="o-auto"><option value="1" selected>On</option><option value="0">Off</option></select></label>
       <label class="field">Frame-rate cap <select id="o-cap"><option value="0" selected>Display refresh</option><option value="240">240</option><option value="165">165</option><option value="144">144</option><option value="120">120</option><option value="60">60</option></select></label>
       <label class="field">Fullscreen on start <select id="o-fs"><option value="1" selected>On</option><option value="0">Off</option></select></label>
-      <label class="field">Transmission <select id="o-trans"><option value="auto">Automatic</option><option value="manual">Manual</option></select></label>
       <label class="field">ABS <select id="o-abs"><option value="1">On</option><option value="0">Off</option></select></label>
-      <label class="field">Traction control <select id="o-tc"><option value="1">On</option><option value="0">Off</option></select></label>
-      <label class="field">Brake bias (front %) <input type="range" id="o-bias" min="50" max="64" value="57"></label>
+      <label class="field">Traction + stability control <select id="o-tc"><option value="1">On</option><option value="0">Off</option></select></label>
     </div>
     <h2>Audio</h2>
     <div class="grid">
@@ -261,8 +267,8 @@ h2{font-size:13px;letter-spacing:.14em;color:var(--dim);text-transform:uppercase
     <h2 class="keys-only">Controls</h2>
     <div class="touch-only sub" id="mobilehelp" style="text-transform:none;letter-spacing:.02em">Touch: &#9664; &#9654; steer · GAS / BRAKE pedals · DRS, CAM, RESET and pause buttons on the right. Hold the phone sideways.</div>
     <div class="keys keys-only">
-      <span><b>W/↑</b> Throttle</span><span><b>S/↓</b> Brake</span><span><b>A D/← →</b> Steer</span><span><b>F</b> DRS</span>
-      <span><b>E / Q</b> Gear up/down</span><span><b>M</b> Auto/Manual</span><span><b>C</b> Camera</span><span><b>R</b> Reset car</span>
+      <span><b>W/↑</b> Throttle</span><span><b>S/↓</b> Brake</span><span><b>A D/← →</b> Steer</span>
+      <span><b>Auto</b> gearbox</span><span><b>F</b> DRS (GT3 RS)</span><span><b>C</b> Camera</span><span><b>R</b> Reset car</span>
       <span><b>Esc</b> Pause</span><span><b>N</b> Mute</span><span><b>F3 / `</b> Debug</span><span><b>Gamepad</b> supported</span>
     </div>
     <div class="btns"><button class="btn" id="b-start">Start session</button></div>
@@ -280,7 +286,7 @@ h2{font-size:13px;letter-spacing:.14em;color:var(--dim);text-transform:uppercase
       <label class="field">Frame-rate cap <select id="p-cap"><option value="0">Display refresh</option><option value="240">240</option><option value="165">165</option><option value="144">144</option><option value="120">120</option><option value="60">60</option></select></label>
       <label class="field">Dynamic resolution <select id="p-dynres"><option value="1">On</option><option value="0">Off</option></select></label>
       <label class="field">ABS <select id="p-abs"><option value="1">On</option><option value="0">Off</option></select></label>
-      <label class="field">Traction control <select id="p-tc"><option value="1">On</option><option value="0">Off</option></select></label>
+      <label class="field">Traction + stability control <select id="p-tc"><option value="1">On</option><option value="0">Off</option></select></label>
       <label class="field">Master volume <input type="range" id="p-master" min="0" max="100"></label>
       <label class="field">Engine volume <input type="range" id="p-engine" min="0" max="100"></label>
       <label class="field">Effects volume <input type="range" id="p-fx" min="0" max="100"></label>

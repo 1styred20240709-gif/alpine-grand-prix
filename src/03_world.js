@@ -1,39 +1,32 @@
 
 // =====================================================================
-// ENVIRONMENT — terrain, lake, mountain ranges, sky, clouds, vegetation
+// ENVIRONMENT — Eifel terrain from real elevation data, distant hills, sky,
+// clouds, forest. (The Nordschleife has no lake: WATER_LEVEL is far below.)
 // =====================================================================
-const WATER_LEVEL = -4.0;
-const LAKE = { x: 860, z: 120 };
-const WORLD_C = { x: -380, z: -60 };
+const WATER_LEVEL = -1e4;
+const LAKE = { x: 0, z: 0 };
+const DEM = (() => { const g = NORDS_DATA.grid, h = decodeI16(g.h); const f = new Float32Array(h.length); for (let i = 0; i < h.length; i++) f[i] = h[i] / 10; return { ...g, f }; })();
+const WORLD_C = { x: DEM.cx, z: DEM.cz };
 const srgb = (r, g, b) => [Math.pow(r, 2.2), Math.pow(g, 2.2), Math.pow(b, 2.2)];
 const WIND = { uTime: { value: 0 } };
 
-function lakeMask(x, z) {
-  const dx = x - LAKE.x, dz = z - LAKE.z, a = Math.atan2(dz, dx);
-  const R = 440 + 85 * Math.sin(3 * a + 1.1) + 55 * Math.sin(5 * a + 2.3) + 30 * Math.sin(9 * a + 0.4) + 40 * NOISE2.noise(Math.cos(a) * 2 + 9, Math.sin(a) * 2);
-  const q = Math.hypot(dx, dz) / R;
-  return smoothstep(1.18, 0.55, q);
+// bicubic (Catmull-Rom) sample of the 120 m EU-DEM grid, metres relative to the data base height
+function demHeight(x, z) {
+  const fx = clamp((x - (DEM.cx - DEM.size / 2)) / DEM.step, 0, DEM.n - 1.001), fz = clamp((z - (DEM.cz - DEM.size / 2)) / DEM.step, 0, DEM.n - 1.001);
+  const ix = Math.floor(fx), iz = Math.floor(fz), tx = fx - ix, tz = fz - iz, n = DEM.n;
+  const at = (c, r) => DEM.f[clamp(r, 0, n - 1) * n + clamp(c, 0, n - 1)];
+  const cr = (p0, p1, p2, p3, t) => p1 + 0.5 * t * (p2 - p0 + t * (2 * p0 - 5 * p1 + 4 * p2 - p3 + t * (3 * (p1 - p2) + p3 - p0)));
+  const row = (r) => cr(at(ix - 1, r), at(ix, r), at(ix + 1, r), at(ix + 2, r), tx);
+  return cr(row(iz - 1), row(iz), row(iz + 1), row(iz + 2), tz);
 }
 function naturalHeight(x, z) {
-  const base = 30 * smoothstep(-180, -1150, x);
-  const hills = NOISE.fbm(x * 0.0018, z * 0.0018, 5) * 18 + NOISE.fbm(x * 0.0047 + 7.1, z * 0.0047 - 3.3, 3) * 4;
-  const r = Math.hypot(x - WORLD_C.x, z - WORLD_C.z);
-  const mnt = smoothstep(1000, 2600, r);
-  let mountains = 0;
-  if (mnt > 0) {
-    const wx = x + NOISE.fbm(x * 0.0004, z * 0.0004, 3) * 500, wz = z + NOISE.fbm(x * 0.0004 + 5, z * 0.0004, 3) * 500;
-    const ridge = NOISE2.ridged(wx * 0.00062, wz * 0.00062, 6);
-    mountains = mnt * (ridge * 900 + NOISE.fbm(x * 0.0011, z * 0.0011, 4) * 170 + 70 * mnt);
-  }
-  let h = base + hills + mountains;
-  const lm = lakeMask(x, z);
-  if (lm > 0) { const floor = WATER_LEVEL - 1.5 - 30 * lm; h = lerp(h, floor, smoothstep(0, 0.38, lm)); }
-  return h;
+  // real topography + small-scale detail the 120 m grid cannot carry
+  return demHeight(x, z) + NOISE.fbm(x * 0.012, z * 0.012, 3) * 2.2 + NOISE.fbm(x * 0.0035 + 4, z * 0.0035, 2) * 3;
 }
 
 class Terrain {
   constructor(track, seg) {
-    this.track = track; this.size = 5600; this.seg = seg;
+    this.track = track; this.size = DEM.size; this.seg = seg;
     this.x0 = WORLD_C.x - this.size / 2; this.z0 = WORLD_C.z - this.size / 2; this.cellSize = this.size / seg;
   }
   async build(progress) {
@@ -119,8 +112,10 @@ class Terrain {
       let f = smoothstep(0.0, 0.25, forest) * smoothstep(40, 90, d); c = c.map((v, i) => lerp(v, dark[i], f)); // forest floor
       const soil = srgb(0.40, 0.32, 0.22); f = smoothstep(0.22, 0.42, slope + nn * 0.08); c = c.map((v, i) => lerp(v, soil[i], f * 0.8));
       const rock = srgb(0.47 + nn * 0.08, 0.45 + nn * 0.08, 0.43 + nn * 0.07); f = Math.max(smoothstep(0.38, 0.58, slope + nn * 0.1), smoothstep(700, 1000, y + nn * 120)); c = c.map((v, i) => lerp(v, rock[i], f));
-      const snow = srgb(0.93, 0.95, 0.98); f = smoothstep(980, 1150, y + nn * 160) * smoothstep(0.75, 0.45, slope); c = c.map((v, i) => lerp(v, snow[i], f));
-      const sand = srgb(0.62, 0.58, 0.5); f = smoothstep(WATER_LEVEL + 2.5, WATER_LEVEL + 0.3, y) * (1 - smoothstep(60, 90, y)); c = c.map((v, i) => lerp(v, sand[i], f));
+      // Eifel farmland: patchwork of fields (crop / hay / ploughed) where there is no forest
+      const cell = NOISE2.noise(Math.floor(x / 180) * 0.71, Math.floor(z / 140) * 0.53), open = 1 - smoothstep(-0.05, 0.2, forest);
+      const crop = cell > 0.25 ? srgb(0.55, 0.52, 0.28) : cell < -0.3 ? srgb(0.42, 0.33, 0.24) : srgb(0.36, 0.48, 0.2);
+      f = open * smoothstep(60, 120, d) * smoothstep(0.25, 0.1, slope) * 0.85; c = c.map((v, i) => lerp(v, crop[i], f));
       const mown = srgb(0.36, 0.50, 0.19); f = smoothstep(30, 6, d); c = c.map((v, i) => lerp(v, mown[i], f));
       col[k * 3] = c[0]; col[k * 3 + 1] = c[1]; col[k * 3 + 2] = c[2];
     }
@@ -144,31 +139,21 @@ function mountainRing(rIn, rOut, rs, as, heightFn, colorFn) {
   return g;
 }
 function buildMountains(mat) {
+  // Eifel beyond the elevation grid: rolling wooded hills and volcanic cones, hazed by distance
   const group = new THREE.Group();
-  // mid-distance ranges: several ridges, forests low, rock and snow high
-  const mid = mountainRing(2650, 8200, 46, 300, (x, z, r, f) => {
-    const ridge = NOISE2.ridged(x * 0.00035 + 11, z * 0.00035, 6), base = NOISE.fbm(x * 0.0002, z * 0.0002, 3);
-    return 260 + ridge * 1500 * (0.55 + 0.45 * smoothstep(0, 0.4, f)) + base * 300 - 400 * smoothstep(0.85, 1, f);
-  }, (x, h, z) => {
-    const n = NOISE.fbm(x * 0.003, z * 0.003, 2);
-    let c = srgb(0.18, 0.27, 0.13); const rock = srgb(0.45, 0.44, 0.44), snow = srgb(0.92, 0.94, 0.98);
-    c = c.map((v, i) => lerp(v, rock[i], smoothstep(650, 1000, h + n * 200)));
-    c = c.map((v, i) => lerp(v, snow[i], smoothstep(1250, 1450, h + n * 250)));
-    return c;
-  });
+  const edge = (() => { let s = 0, n = 0; for (let i = 0; i < DEM.n; i++) { s += DEM.f[i] + DEM.f[(DEM.n - 1) * DEM.n + i] + DEM.f[i * DEM.n] + DEM.f[i * DEM.n + DEM.n - 1]; n += 4; } return s / n; })();
+  const hillCol = (x, h, z) => {
+    const n = NOISE.fbm(x * 0.0015, z * 0.0015, 2), fieldy = smoothstep(0.1, 0.35, NOISE2.fbm(x * 0.0006, z * 0.0006, 2));
+    return srgb(lerp(0.15, 0.36, fieldy) + n * 0.03, lerp(0.24, 0.42, fieldy) + n * 0.03, lerp(0.12, 0.2, fieldy));
+  };
+  const mid = mountainRing(4500, 13000, 40, 300, (x, z, r, f) => {
+    const hills = NOISE.fbm(x * 0.00045, z * 0.00045, 5) * 160 + NOISE2.ridged(x * 0.0003 + 5, z * 0.0003, 4) * 140;
+    return lerp(edge, edge + 40 + hills, smoothstep(0, 0.12, f)) - 120 * smoothstep(0.85, 1, f);
+  }, hillCol);
   const mm = new THREE.Mesh(mid, mat); mm.name = 'mountains-mid'; group.add(mm);
-  // distant giants: simple silhouettes, colour pushed toward haze
-  const far = mountainRing(7600, 17000, 28, 360, (x, z, r, f) => {
-    const ridge = NOISE.ridged(x * 0.00022 + 3, z * 0.00022 - 7, 6);
-    const base = NOISE2.fbm(x * 0.00008, z * 0.00008, 3);
-    return 400 + ridge * 2300 * (0.55 + 0.45 * smoothstep(0.0, 0.35, f)) * (1 - 0.5 * f) + base * 400 - 700 * smoothstep(0.75, 1, f);
-  }, (x, h, z) => {
-    const n = NOISE.fbm(x * 0.002, z * 0.002, 2);
-    const snow = smoothstep(1700, 2100, h + n * 300);
-    const rock = srgb(0.30, 0.34, 0.40), forest = srgb(0.16, 0.24, 0.20), sn = srgb(0.90, 0.93, 0.98);
-    let c = forest.map((v, i) => lerp(v, rock[i], smoothstep(700, 1300, h + n * 200)));
-    return c.map((v, i) => lerp(v, sn[i], snow));
-  });
+  const far = mountainRing(12500, 26000, 16, 260, (x, z, r, f) => {
+    return edge + 60 + NOISE.fbm(x * 0.00018 + 3, z * 0.00018 - 7, 4) * 280 + NOISE2.ridged(x * 0.00012, z * 0.00012, 3) * 260 - 300 * smoothstep(0.8, 1, f);
+  }, (x, h) => srgb(0.24, 0.31, 0.30));
   const fm = new THREE.Mesh(far, mat); fm.name = 'mountains-far'; group.add(fm);
   return group;
 }
@@ -356,7 +341,7 @@ class Vegetation {
   }
   excluded(x, z) { for (const e of this.ex) { if (Math.hypot(x - e.x, z - e.z) < e.r) return true; } return false; }
   build() {
-    const T = this.terrain, r = mulberry32(2024), size = 1000;
+    const T = this.terrain, r = mulberry32(2024), size = 1600;
     const types = {
       pine: { hi: VegGeo.pine(true), lo: VegGeo.pine(false), mat: windMaterial({ vertexColors: true, roughness: 0.9 }, 0.0009), list: [] },
       broad: { hi: VegGeo.broadleaf(true), lo: VegGeo.broadleaf(false), mat: windMaterial({ vertexColors: true, roughness: 0.85 }, 0.0012), list: [] },
@@ -368,19 +353,19 @@ class Vegetation {
       const d = T.trackDist(x, z); const ny = T.normalY(x, z);
       return { h, d, ny };
     };
-    const attempts = Math.round(150000 * (this.budget || 1));
+    const attempts = Math.round(200000 * (this.budget || 1)); // 92 km² of Eifel: the 'Green Hell' is mostly forest
     for (let k = 0; k < attempts; k++) {
       const x = T.x0 + 40 + r() * (T.size - 80), z = T.z0 + 40 + r() * (T.size - 80);
       const f = T.forest(x, z); const rr = r();
       const s = tryPlace(x, z); if (!s) continue;
-      if (s.d < 22 || this.excluded(x, z)) continue;
+      if (s.d < 9 || this.excluded(x, z)) continue; // forest right up to the verges
       if (s.h > 1000 + NOISE.noise(x * 0.01, z * 0.01) * 120) continue;
-      if (s.ny > 0.78 && f > -0.05 + rr * 0.25 && s.h < 820) {
-        const isBroad = s.h < 60 && NOISE.noise(x * 0.004, z * 0.004) > 0.15 && r() < 0.6;
+      if (s.ny > 0.72 && f > -0.18 + rr * 0.25 && s.h < 820) {
+        const isBroad = NOISE.noise(x * 0.004, z * 0.004) > -0.05 && r() < 0.55; // spruce + beech/oak mix
         (isBroad ? types.broad : types.pine).list.push([x, s.h - 0.2, z, 0.75 + r() * 0.65, r() * TAU]);
       } else if (s.ny > 0.7 && r() < 0.06 && s.d > 26) types.broad.list.push([x, s.h - 0.2, z, 0.8 + r() * 0.6, r() * TAU]);
-      if (r() < 0.12 && s.ny > 0.75 && s.h < 900) types.bush.list.push([x, s.h - 0.1, z, 0.6 + r() * 1.2, r() * TAU]);
-      if (r() < (s.ny < 0.8 ? 0.12 : 0.025)) types.rock.list.push([x, s.h - 0.5, z, 1.2 + r() * (s.ny < 0.8 ? 5.5 : 1.6), r() * TAU]);
+      if (r() < 0.045 && s.ny > 0.75 && s.h < 900) types.bush.list.push([x, s.h - 0.1, z, 0.6 + r() * 1.2, r() * TAU]);
+      if (r() < (s.ny < 0.8 ? 0.05 : 0.006)) types.rock.list.push([x, s.h - 0.5, z, 1.2 + r() * (s.ny < 0.8 ? 5.5 : 1.6), r() * TAU]);
     }
     // rocks and bushes along the lake shore
     for (let k = 0; k < 900; k++) {
@@ -416,8 +401,8 @@ class Vegetation {
     // grass tufts: dense near the circuit verges, LOD-culled by distance
     const grassMat = windMaterial({ vertexColors: true, roughness: 0.9, side: THREE.DoubleSide }, 0.25);
     const gg = VegGeo.grass(); const gl = [];
-    const gMax = Math.round(26000 * (this.budget || 1));
-    for (let k = 0; k < 70000 && gl.length < gMax; k++) {
+    const gMax = Math.round(60000 * (this.budget || 1));
+    for (let k = 0; k < 160000 && gl.length < gMax; k++) {
       const i = Math.floor(r() * this.track.N), side = r() < 0.5 ? 1 : -1;
       const wall = side > 0 ? this.track.wallL[i] : this.track.wallR[i], verge = side > 0 ? this.track.vergeL[i] : this.track.vergeR[i];
       const ty = side > 0 ? this.track.typeL[i] : this.track.typeR[i];
