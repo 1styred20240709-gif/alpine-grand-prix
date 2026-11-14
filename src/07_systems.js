@@ -280,13 +280,26 @@ class Input {
       this.keys.add(e.code);
     });
     window.addEventListener('keyup', (e) => { this.keys.delete(e.code); });
+    // on-screen touch controls: hold-zones for steering/pedals, tap buttons for actions
+    this.touch = { left: false, right: false, gas: false, brake: false };
+    const hold = (id, key) => {
+      const el = document.getElementById(id); if (!el) return; const ids = new Set();
+      const set = () => { this.touch[key] = ids.size > 0; el.classList.toggle('on', ids.size > 0); };
+      el.addEventListener('pointerdown', (e) => { e.preventDefault(); ids.add(e.pointerId); try { el.setPointerCapture(e.pointerId); } catch (_) { } set(); });
+      for (const t of ['pointerup', 'pointercancel', 'lostpointercapture']) el.addEventListener(t, (e) => { ids.delete(e.pointerId); set(); });
+      el.addEventListener('contextmenu', (e) => e.preventDefault());
+    };
+    hold('t-left', 'left'); hold('t-right', 'right'); hold('t-gas', 'gas'); hold('t-brake', 'brake');
+    const tap = (id, action) => { const el = document.getElementById(id); if (el) el.addEventListener('pointerdown', (e) => { e.preventDefault(); this.onAction(action); }); };
+    tap('t-drs', 'drs'); tap('t-cam', 'camera'); tap('t-reset', 'reset'); tap('t-pause', 'pause');
     window.addEventListener('blur', () => this.keys.clear());
     document.addEventListener('visibilitychange', () => { if (document.hidden) this.keys.clear(); });
   }
   k(...c) { return c.some(x => this.keys.has(x)); }
   update(dt) {
-    let tT = this.k('KeyW', 'ArrowUp') ? 1 : 0, bT = this.k('KeyS', 'ArrowDown') ? 1 : 0;
-    let sT = (this.k('KeyA', 'ArrowLeft') ? 1 : 0) - (this.k('KeyD', 'ArrowRight') ? 1 : 0);
+    const T = this.touch;
+    let tT = this.k('KeyW', 'ArrowUp') || T.gas ? 1 : 0, bT = this.k('KeyS', 'ArrowDown') || T.brake ? 1 : 0;
+    let sT = (this.k('KeyA', 'ArrowLeft') || T.left ? 1 : 0) - (this.k('KeyD', 'ArrowRight') || T.right ? 1 : 0);
     let analog = false;
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     const p = pads && [...pads].find(x => x && x.connected);
@@ -303,7 +316,7 @@ class Input {
     if (analog) this.steer = lerp(this.steer, sT, 1 - Math.exp(-dt * 20));
     else { const centring = sT === 0 || Math.sign(sT) !== Math.sign(this.steer); this.steer = ramp(this.steer, sT, centring ? 5.0 : 2.6, centring ? 5.0 : 2.6); }
   }
-  reset() { this.keys.clear(); this.throttle = this.brake = this.steer = 0; }
+  reset() { this.keys.clear(); this.throttle = this.brake = this.steer = 0; for (const k in this.touch) this.touch[k] = false; document.querySelectorAll('#touch .on').forEach(e => e.classList.remove('on')); }
 }
 
 // =====================================================================
@@ -312,7 +325,7 @@ class Input {
 class AudioSys {
   constructor() { this.ctx = null; this.vol = { master: 0.8, engine: 0.8, fx: 0.8, mute: false }; this.active = 0; this.lastShot = {}; }
   init() {
-    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
+    if (this.ctx) { if (this.ctx.state !== 'running' && this.ctx.state !== 'closed') this.ctx.resume(); return; } // iOS uses 'interrupted' after calls / app switches
     const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
     const ctx = this.ctx = new AC();
     this.master = ctx.createGain(); const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 4;
@@ -363,7 +376,7 @@ class AudioSys {
     this.master.gain.setTargetAtTime(v.mute ? 0 : v.master, t, 0.05); this.engBus.gain.setTargetAtTime(v.engine, t, 0.05); this.fxBus.gain.setTargetAtTime(v.fx, t, 0.05);
   }
   suspend() { if (this.ctx && this.ctx.state === 'running') this.ctx.suspend(); }
-  resume() { if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume(); }
+  resume() { if (this.ctx && this.ctx.state !== 'running' && this.ctx.state !== 'closed') this.ctx.resume(); }
   update(st) {
     if (!this.ctx || this.ctx.state !== 'running') return;
     const t = this.ctx.currentTime, tc = 0.03;
@@ -516,7 +529,7 @@ class HUD {
       el.debug.textContent =
         `FPS ${G.fps.toFixed(0)}  frame ${G.frameMs.toFixed(2)} ms  display ${G.perf.refreshHz} Hz  res x${G.resScale.toFixed(2)}\n` +
         `CPU sim ${G.perf.cpu.sim.toFixed(2)}  visuals ${G.perf.cpu.vis.toFixed(2)}  render ${G.perf.cpu.render.toFixed(2)}  total ${G.perf.cpu.total.toFixed(2)} ms\n` +
-        `GPU ${G.perf.gpuMs == null ? 'n/a (timer query unavailable)' : G.perf.gpuMs.toFixed(2) + ' ms'}  physics ${Math.round(1 / G.h)} Hz\n` +
+        `GPU ${G.perf.gpuMs == null ? 'n/a (timer query unavailable)' : G.perf.gpuMs.toFixed(2) + ' ms'}  physics ${Math.round(1 / G.h)} Hz  ${G.caps.gl2 ? 'WebGL2' : 'WebGL1'}  tier ${G.device.tier}  load ${(G.loadMs / 1000).toFixed(1)} s\n` +
         `draw calls ${G.drawCalls || 0}  tris ${((G.drawTris || 0) / 1000).toFixed(0)}k  quality ${G.quality}\n` +
         `speed ${kmh.toFixed(1)} km/h  rpm ${rpm.toFixed(0)}  gear ${ph.engine.gear}\n` +
         `steer ${(w[0].steer * 180 / Math.PI).toFixed(1)}°  thr ${ph.input.throttle.toFixed(2)} brk ${ph.input.brake.toFixed(2)} TC ${ph.tcFactor.toFixed(2)}\n` +

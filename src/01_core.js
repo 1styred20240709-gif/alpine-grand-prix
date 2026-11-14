@@ -82,6 +82,7 @@ const NOISE2 = new Noise2D(4242);
 // ---------------------------------------------------------------- texture factory
 const Tex = {
   anisotropy: 4,
+  detail: 1, // 0.5 on low-tier devices: generated textures are half size (4x less CPU at load)
   canvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; },
   finish(canvas, srgb = true, repeat = true) {
     const t = new THREE.CanvasTexture(canvas);
@@ -106,7 +107,7 @@ const Tex = {
   },
   // Generic tileable surface: returns {map, roughnessMap, normalMap}
   surface(opt) {
-    const S = opt.size || 512, n = new Noise2D(opt.seed || 7), r = mulberry32(opt.seed || 7);
+    const S = Math.max(128, Math.round((opt.size || 512) * (Tex.detail || 1))), n = new Noise2D(opt.seed || 7), r = mulberry32(opt.seed || 7);
     const col = Tex.canvas(S, S), rough = Tex.canvas(S, S);
     const cctx = col.getContext('2d'), rctx = rough.getContext('2d');
     const ci = cctx.createImageData(S, S), ri = rctx.createImageData(S, S);

@@ -162,7 +162,7 @@ class Facilities {
     return this.group;
   }
   _labelAtlas(labels) {
-    const S = 256, cols = 8, rows = Math.ceil(labels.length / cols), W = S * cols, H = S * rows;
+    const S = 256, cols = 8, rows = Math.ceil(labels.length / cols), W = S * cols, H = Math.pow(2, Math.ceil(Math.log2(S * rows))); // power-of-two for WebGL1 mipmaps
     const c = Tex.canvas(W, H), ctx = c.getContext('2d');
     labels.forEach((L, i) => {
       const x = (i % cols) * S, y = Math.floor(i / cols) * S, o = L.opts;

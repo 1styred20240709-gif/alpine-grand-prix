@@ -3,14 +3,55 @@
 // GAME — renderer, quality presets, world assembly, session flow, loop
 // =====================================================================
 const QUALITY = {
-  high: { pixel: 1.75, shadow: 2048, shadowR: 70, ao: true, bloom: true, msaa: 4, veg: 1.0, lod: 900, grass: 300, aniso: 8, treeShadow: true },
-  medium: { pixel: 1.25, shadow: 2048, shadowR: 60, ao: false, bloom: true, msaa: 4, veg: 0.7, lod: 600, grass: 220, aniso: 4 },
-  performance: { pixel: 1.0, shadow: 1024, shadowR: 45, ao: false, bloom: false, msaa: 0, veg: 0.4, lod: 350, grass: 0, aniso: 2 },
+  high: { pixel: 1.75, shadow: 2048, shadowR: 70, ao: true, bloom: true, msaa: 4, veg: 1.0, lod: 900, grass: 300, aniso: 8, treeShadow: true, fpsTarget: 120 },
+  medium: { pixel: 1.25, shadow: 2048, shadowR: 60, ao: false, bloom: true, msaa: 4, veg: 0.7, lod: 600, grass: 220, aniso: 4, fpsTarget: 60 },
+  performance: { pixel: 1.0, shadow: 1024, shadowR: 45, ao: false, bloom: false, msaa: 0, veg: 0.4, lod: 350, grass: 0, aniso: 2, hardShadows: true, minScale: 0.6, fpsTarget: 60 },
+  // Ultra Low: old CPUs, integrated / mobile GPUs and software renderers. No shadow map, no
+  // post-processing (tone mapping happens in each material, straight to the screen), sparse
+  // vegetation, no clouds, and a render scale that may drop to 50%.
+  minimal: { pixel: 1.0, shadow: 512, shadowR: 40, ao: false, bloom: false, msaa: 0, veg: 0.18, lod: 160, grass: 0, aniso: 1, noShadows: true, noPost: true, noClouds: true, startScale: 0.85, minScale: 0.5, fpsTarget: 45 },
   // Tuned for i9-9900K + RTX 2080 Ti class PCs on 240 Hz displays: every effect whose cost does not
   // scale well at 4.17 ms/frame is cut (GTAO, bloom chain, tree shadow casting), physics runs at 240 Hz for the
   // lowest input latency, and spare GPU time is spent on supersampling (render scale up to 1.5x).
   competitive: { pixel: 1.0, shadow: 2048, shadowR: 55, ao: false, bloom: false, msaa: 4, veg: 0.85, lod: 520, grass: 200, aniso: 16, treeShadow: false, physHz: 240, maxScale: 1.5, minScale: 0.7, hardShadows: true }
 };
+// ladder used by automatic downgrades
+const QUALITY_DOWN = { competitive: 'medium', high: 'medium', medium: 'performance', performance: 'minimal', minimal: null };
+const QUALITY_NAME = { competitive: '240 FPS Competitive', high: 'High', medium: 'Medium', performance: 'Low', minimal: 'Ultra Low' };
+
+// ---------------------------------------------------------------- device profiling
+// Classifies the machine into tiers 0..4 from the GPU name, CPU core count, device memory and
+// form factor. The tier picks the starting preset and how much detail is generated at load
+// time (which is the slow part on weak CPUs). URL overrides: ?tier=0..4 ?quality=<preset> ?webgl1
+function detectDevice(gl) {
+  const q = new URLSearchParams(location.search);
+  const ext = gl.getExtension('WEBGL_debug_renderer_info');
+  const gpu = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+  const cores = navigator.hardwareConcurrency || 4, mem = navigator.deviceMemory || 8;
+  const ua = navigator.userAgent || '';
+  const iPadOS = /Macintosh/.test(ua) && (navigator.maxTouchPoints || 0) > 1;
+  const mobileUA = /iPhone|iPad|iPod|Android|Mobile|Silk|Kindle|Opera Mini|IEMobile/i.test(ua) || iPadOS;
+  const coarse = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
+  const touch = (mobileUA && (coarse || 'ontouchstart' in window || (navigator.maxTouchPoints || 0) > 0)) || ((navigator.maxTouchPoints || 0) > 0 && coarse);
+  const mobile = touch && Math.min(screen.width, screen.height) < 900;
+  const software = /swiftshader|llvmpipe|softpipe|lavapipe|basic render|microsoft basic|mesa offscreen/i.test(gpu);
+  const highEnd = /RTX\s?[2-9]0|RTX\s?A\d|GTX\s?10[78]0|GTX\s?1660|RX\s?(5[67]|6[789]|7[6-9])\d\d|Radeon\s?(Pro|VII)|Arc\s?A7|Apple M\d (Max|Ultra)/i.test(gpu);
+  const midDiscrete = /GTX|Quadro|RTX|Radeon\s?(RX|R9|HD 7[89])|RX\s?\d{3,4}|Arc|Apple M\d Pro/i.test(gpu);
+  const modernMobile = /Adreno.{0,12}(6[4-9]\d|7\d\d)|Mali-G7[1-9]|Mali-G[6-9]\d\d|Immortalis|Apple GPU|Xclipse/i.test(gpu);
+  const decentIntegrated = /Apple M\d|Iris\s?Xe|Radeon\s?(\d{3}M|Graphics)|Vega\s?(8|10|11)/i.test(gpu);
+  let tier;
+  if (software) tier = 0;
+  else if (mobile) tier = modernMobile ? 2 : 1;
+  else if (highEnd) tier = 4;
+  else if (midDiscrete) tier = 3;
+  else if (decentIntegrated) tier = 2;
+  else if (/Intel|UHD|HD Graphics|Iris|Mali|Adreno|PowerVR|GMA/i.test(gpu)) tier = 1;
+  else tier = 2; // unknown GPU: start in the middle and let auto-adjust correct it
+  if (cores <= 2 || mem <= 2) tier = Math.min(tier, 1); else if (cores <= 4 && mem <= 4) tier = Math.min(tier, 2);
+  if (q.has('tier')) tier = clamp(parseInt(q.get('tier')) || 0, 0, 4);
+  return { gpu, cores, mem, touch, mobile, software, tier, forcedQuality: q.get('quality') };
+}
+
 const TEAMS = [
   { name: 'Alpine Works', code: 'YOU', color: 0x1f5fff, accent: 0xff2d55, number: 7, helmet: 0xffd23f, css: '#ffd23f' },
   { name: 'Scuderia Vetta', code: 'VET', color: 0xd4131b, accent: 0xffd200, number: 11, helmet: 0xffd200, css: '#e01b22' },
@@ -30,7 +71,7 @@ const TEAMS = [
 class Perf {
   constructor(renderer) {
     this.gl = renderer.getContext();
-    this.ext = this.gl.getExtension('EXT_disjoint_timer_query_webgl2');
+    this.ext = typeof this.gl.createQuery === 'function' ? this.gl.getExtension('EXT_disjoint_timer_query_webgl2') : null; // WebGL2 only
     this.pool = []; this.pending = []; this.active = null; this.gpuMs = null;
     this.cpu = { sim: 0, vis: 0, render: 0, total: 0 }; this.t0 = 0;
     this.intervals = new Float32Array(240); this.ii = 0; this.n = 0; this.refreshMs = 1000 / 60; this.refreshHz = 60; this._rt = 0;
@@ -77,14 +118,32 @@ class Game {
   }
   setLoad(f, txt) { document.getElementById('loadbar').style.width = (f * 100).toFixed(0) + '%'; if (txt) document.getElementById('loadtxt').textContent = txt; }
   async init() {
-    if (window.__agpNoGL) throw new Error('WebGL2 unavailable');
+    const tLoad = performance.now();
+    if (window.__agpNoGL) throw new Error('WebGL unavailable');
     this.setLoad(0.02, 'Creating renderer…');
     const app = document.getElementById('app');
+    // WebGL2 first, WebGL1 as a fallback for old GPUs / browsers (?webgl1 forces it for testing)
+    const canvas = document.createElement('canvas');
+    const attrs = { alpha: false, antialias: false, depth: true, stencil: false, powerPreference: 'high-performance', premultipliedAlpha: true, preserveDrawingBuffer: false };
+    let gl = null;
+    if (!new URLSearchParams(location.search).has('webgl1')) { try { gl = canvas.getContext('webgl2', attrs); } catch (e) { gl = null; } }
+    const gl2 = !!gl;
+    if (!gl) { try { gl = canvas.getContext('webgl', attrs) || canvas.getContext('experimental-webgl', attrs); } catch (e) { gl = null; } }
+    if (!gl) throw new Error('WebGL could not be initialised. Enable hardware acceleration or update the graphics driver.');
     let renderer;
-    try { renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false }); }
+    try { renderer = new THREE.WebGLRenderer({ canvas, context: gl, antialias: false, powerPreference: 'high-performance', stencil: false }); }
     catch (err) { throw new Error('WebGL renderer could not be created: ' + err.message); }
-    if (!renderer.capabilities.isWebGL2) throw new Error('A WebGL2 context is required.');
-    this.renderer = renderer; this.perf = new Perf(renderer);
+    this.renderer = renderer;
+    // capability probe: float render targets drive HDR post-processing and the environment map
+    const floatRT = !new URLSearchParams(location.search).has('nofloat') && (gl2 ? !!(gl.getExtension('EXT_color_buffer_float') || gl.getExtension('EXT_color_buffer_half_float'))
+      : !!(gl.getExtension('OES_texture_half_float') && gl.getExtension('EXT_color_buffer_half_float')));
+    this.caps = { gl2, floatRT, maxSamples: gl2 ? (renderer.capabilities.maxSamples || 0) : 0, maxTex: renderer.capabilities.maxTextureSize };
+    this.device = detectDevice(gl);
+    if (this.caps.maxTex < 4096) this.device.tier = Math.min(this.device.tier, 1);
+    // phones get low build detail regardless of GPU: mobile browsers (iOS Safari especially) kill tabs that use too much memory
+    this.buildDetail = (this.device.tier <= 1 || this.device.mobile) ? 'low' : 'normal';
+    Tex.detail = this.buildDetail === 'low' ? 0.5 : 1;
+    this.perf = new Perf(renderer);
     renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.62;
     renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.setSize(window.innerWidth, window.innerHeight); renderer.info.autoReset = false;
@@ -93,10 +152,16 @@ class Game {
     renderer.domElement.addEventListener('webglcontextlost', (e) => { e.preventDefault(); window.__agpFail('The WebGL context was lost (GPU reset or driver issue). Reload the page to continue.'); });
     Tex.anisotropy = Math.min(16, renderer.capabilities.getMaxAnisotropy());
     // GPU identification (used to pre-select the best preset)
-    { const gl = renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
-      this.gpuName = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : 'unknown';
-      this.highEndGPU = /RTX\s?[2-9]0|RTX\s?A\d|GTX\s?10[78]0|GTX\s?1660|RX\s?(5[67]|6[789]|7[6-9])\d\d|Radeon\s?(Pro|VII)|Arc\s?A7/i.test(this.gpuName);
-      if (this.highEndGPU) this.quality = 'competitive'; }
+    this.gpuName = this.device.gpu;
+    this.quality = ['minimal', 'performance', 'medium', 'high', 'competitive'][this.device.tier];
+    if (this.device.forcedQuality && QUALITY[this.device.forcedQuality]) this.quality = this.device.forcedQuality;
+    this.autoQuality = true; this.userPickedQuality = !!this.device.forcedQuality;
+    if (this.device.touch) document.body.classList.add('touch');
+    // a touch-screen laptop or an unusual browser that was not detected: switch to touch mode on the first real touch
+    window.addEventListener('touchstart', () => {
+      if (this.device.touch) return; this.device.touch = true; document.body.classList.add('touch');
+      if (this.inSession) document.getElementById('touch').classList.remove('hidden');
+    }, { passive: true });
     const scene = this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 26000);
     // ---------------- sky, sun, fog, environment
@@ -106,15 +171,17 @@ class Game {
     // the sun never moves, so the atmospheric-scattering sky is rendered once into a cubemap
     // and drawn as a background (one texture fetch per pixel instead of the full scattering shader)
     { const skyScene = new THREE.Scene(); skyScene.add(mkSky());
-      this.skyRT = new THREE.WebGLCubeRenderTarget(1024, { type: THREE.HalfFloatType, generateMipmaps: false });
+      this.skyRT = new THREE.WebGLCubeRenderTarget(this.buildDetail === 'low' ? 512 : 1024, { type: floatRT ? THREE.HalfFloatType : THREE.UnsignedByteType, generateMipmaps: false });
       const cc = new THREE.CubeCamera(1, 30000, this.skyRT); cc.update(renderer, skyScene); scene.background = this.skyRT.texture; }
     scene.fog = new THREE.FogExp2(new THREE.Color(0x9fb8d2), 0.000105);
-    const pmrem = new THREE.PMREMGenerator(renderer); const envScene = new THREE.Scene(); envScene.add(mkSky());
-    const hemiEnv = new THREE.Mesh(new THREE.SphereGeometry(100, 16, 8, 0, TAU, Math.PI / 2 + 0.05, Math.PI / 2 - 0.05), new THREE.MeshBasicMaterial({ color: 0x3a4a33, side: THREE.BackSide })); envScene.add(hemiEnv);
-    this.envRT = pmrem.fromScene(envScene, 0.02, 1, 30000); scene.environment = this.envRT.texture; pmrem.dispose();
+    if (floatRT) { // image-based lighting needs half-float render targets
+      const pmrem = new THREE.PMREMGenerator(renderer); const envScene = new THREE.Scene(); envScene.add(mkSky());
+      const hemiEnv = new THREE.Mesh(new THREE.SphereGeometry(100, 16, 8, 0, TAU, Math.PI / 2 + 0.05, Math.PI / 2 - 0.05), new THREE.MeshBasicMaterial({ color: 0x3a4a33, side: THREE.BackSide })); envScene.add(hemiEnv);
+      this.envRT = pmrem.fromScene(envScene, 0.02, 1, 30000); scene.environment = this.envRT.texture; pmrem.dispose();
+    }
     this.sun = new THREE.DirectionalLight(0xfff0dc, 3.1); this.sun.castShadow = true; scene.add(this.sun); scene.add(this.sun.target);
     this.sun.shadow.bias = -0.00025; this.sun.shadow.normalBias = 0.03;
-    this.hemi = new THREE.HemisphereLight(0xc4dcff, 0x46553a, 0.55); scene.add(this.hemi);
+    this.hemi = new THREE.HemisphereLight(0xc4dcff, 0x46553a, floatRT ? 0.55 : 1.4); scene.add(this.hemi); // brighter fill when there is no environment map
     await nextFrame();
     // ---------------- materials
     this.setLoad(0.06, 'Generating asphalt, kerb and terrain textures…'); await nextFrame();
@@ -159,7 +226,7 @@ class Game {
     this.trackGroup = track.buildMeshes(M); scene.add(this.trackGroup);
     // ---------------- terrain & lake
     this.setLoad(0.30, 'Sculpting alpine terrain…'); await nextFrame();
-    this.terrain = new Terrain(track, 360);
+    this.terrain = new Terrain(track, this.buildDetail === 'low' ? 220 : 360);
     await this.terrain.build((f) => this.setLoad(0.30 + f * 0.30, 'Sculpting alpine terrain… ' + Math.round(f * 100) + '%'));
     scene.add(this.terrain.mesh(M.terrain));
     this.setLoad(0.62, 'Raising mountain ranges and filling the lake…'); await nextFrame();
@@ -173,6 +240,7 @@ class Game {
     // ---------------- vegetation
     this.setLoad(0.78, 'Planting forests…'); await nextFrame();
     this.veg = new Vegetation(this.terrain, track, [...this.fac.exclusions, { x: LAKE.x, z: LAKE.z, r: 0 }], 1);
+    this.veg.budget = this.buildDetail === 'low' ? 0.4 : 1;
     this.veg.build(); scene.add(this.veg.group);
     // ---------------- effects
     this.setLoad(0.90, 'Preparing cars and effects…'); await nextFrame();
@@ -191,6 +259,7 @@ class Game {
     this.camera.position.set(0, 20, -200); this.camera.lookAt(0, 0, 0);
     renderer.compile(scene, this.camera); scene.remove(tmp.root); this.fleet.sync([]);
     this.setLoad(1, 'Ready');
+    this.loadMs = performance.now() - tLoad;
     document.querySelector('#menu .sub').textContent = `Lac des Cimes Circuit · ${(track.length / 1000).toFixed(2)} km · ${track.corners.length} corners · ${track.drsZones.length} DRS zones`;
     window.addEventListener('resize', () => this.resize());
     document.addEventListener('visibilitychange', () => { if (document.hidden) { if (this.inSession && !this.paused) this.pause(true); this.audio.suspend(); } });
@@ -208,8 +277,12 @@ class Game {
     const r = this.renderer;
     this.h = 1 / (Q.physHz || 120); this.acc = 0;
     this.minScale = Q.minScale || 0.6; this.maxScale = Q.maxScale || 1.0; this._drCool = 0;
-    this.basePixel = Math.min(window.devicePixelRatio || 1, Q.pixel); this.resScale = 1;
-    r.setPixelRatio(this.basePixel);
+    this.basePixel = Math.min(window.devicePixelRatio || 1, Q.pixel); this.resScale = Q.startScale || 1;
+    r.setPixelRatio(this.basePixel * this.resScale);
+    // shadow map can be switched off entirely (Ultra Low)
+    const shadowsOn = !Q.noShadows;
+    if (r.shadowMap.enabled !== shadowsOn) { r.shadowMap.enabled = shadowsOn; this.sun.castShadow = shadowsOn; this.scene.traverse(o => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => m.needsUpdate = true); }); }
+    if (this.clouds) this.clouds.visible = !Q.noClouds;
     this.sun.shadow.mapSize.set(Q.shadow, Q.shadow);
     // PCF (hardware 2x2) instead of PCFSoft: ~25% of total GPU frame time saved in profiling
     const st = Q.hardShadows ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
@@ -217,14 +290,20 @@ class Game {
     if (this.sun.shadow.map) { this.sun.shadow.map.dispose(); this.sun.shadow.map = null; }
     const sc = this.sun.shadow.camera; sc.left = -Q.shadowR; sc.right = Q.shadowR; sc.top = Q.shadowR; sc.bottom = -Q.shadowR; sc.near = 1; sc.far = 900; sc.updateProjectionMatrix();
     this.veg.density = Q.veg; this.veg.lodDist = Q.lod; this.veg.grassDist = Q.grass; this.veg.setShadows(!!Q.treeShadow);
-    if (this.composer) { this.composer.renderTarget1.dispose(); this.composer.renderTarget2.dispose(); this.composer.passes.forEach(p => p.dispose && p.dispose()); }
-    const w = window.innerWidth, h = window.innerHeight;
-    const rt = new THREE.WebGLRenderTarget(w * this.basePixel, h * this.basePixel, { type: THREE.HalfFloatType, samples: Q.msaa });
+    if (this.composer) { this.composer.renderTarget1.dispose(); this.composer.renderTarget2.dispose(); this.composer.passes.forEach(p => p.dispose && p.dispose()); this.composer = null; }
+    this.aoPass = null; this.bloom = null; this.grade = null;
+    // Without float render targets an 8-bit HDR buffer would clip before tone mapping, so those
+    // GPUs (and Ultra Low) render straight to the screen with tone mapping done in each material.
+    this.usePost = this.caps.floatRT && !Q.noPost;
+    this.updateParticleScale();
+    ['o-quality', 'p-quality'].forEach(id => { const el = document.getElementById(id); if (el) el.value = q; });
+    if (!this.usePost) return;
+    const w = window.innerWidth, h = window.innerHeight, pr = this.basePixel * this.resScale;
+    const rt = new THREE.WebGLRenderTarget(w * pr, h * pr, { type: THREE.HalfFloatType, samples: Math.min(Q.msaa, this.caps.maxSamples) });
     const comp = this.composer = new EffectComposer(r, rt);
-    comp.setPixelRatio(this.basePixel); comp.setSize(w, h);
+    comp.setPixelRatio(pr); comp.setSize(w, h);
     comp.addPass(new RenderPass(this.scene, this.camera));
-    this.aoPass = null; this.bloom = null;
-    if (Q.ao && this.GTAOPass) {
+    if (Q.ao && this.GTAOPass && this.caps.gl2) {
       try { const ao = new this.GTAOPass(this.scene, this.camera, w, h); ao.blendIntensity = 0.85; ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, thickness: 1.0, scale: 1.0, samples: 12, distanceFallOff: 0.4 }); comp.addPass(ao); this.aoPass = ao; }
       catch (err) { console.warn('GTAO unavailable', err); }
     }
@@ -243,8 +322,6 @@ class Game {
       }`);
     out.material.needsUpdate = true;
     comp.addPass(out); this.grade = out;
-    this.updateParticleScale();
-    ['o-quality', 'p-quality'].forEach(id => { const el = document.getElementById(id); if (el) el.value = q; });
   }
   updateParticleScale() {
     const h = window.innerHeight * this.renderer.getPixelRatio();
@@ -253,8 +330,9 @@ class Game {
   }
   resize() {
     const w = window.innerWidth, h = window.innerHeight; this._w = w; this._h = h;
+    if (this.device.touch) document.getElementById('rotate').classList.toggle('hidden', !(this.inSession && h > w));
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
-    this.renderer.setSize(w, h); this.composer.setSize(w, h);
+    this.renderer.setSize(w, h); if (this.composer) this.composer.setSize(w, h);
     if (this.bloom) this.bloom.resolution.set(w, h);
     this.updateParticleScale();
   }
@@ -264,14 +342,29 @@ class Game {
     document.querySelectorAll('.mode').forEach(b => b.addEventListener('click', () => { document.querySelectorAll('.mode').forEach(x => x.classList.remove('sel')); b.classList.add('sel'); this.settings.mode = b.dataset.mode; }));
     const vol = () => { this.audio.vol.master = $('o-master').value / 100; this.audio.vol.engine = $('o-engine').value / 100; this.audio.vol.fx = $('o-fx').value / 100; this.audio.vol.mute = $('o-mute').value === '1'; this.audio.applyVolume(); this.syncPause(); };
     ['o-master', 'o-engine', 'o-fx', 'o-mute'].forEach(id => $(id).addEventListener('input', vol));
-    $('o-quality').addEventListener('change', (e) => this.setQuality(e.target.value));
+    $('o-quality').addEventListener('change', (e) => { this.userPickedQuality = true; this.setQuality(e.target.value); });
+    const auto = (v) => { this.autoQuality = v === '1'; $('o-auto').value = $('p-auto').value = v; };
+    $('o-auto').addEventListener('change', (e) => auto(e.target.value)); $('p-auto').addEventListener('change', (e) => auto(e.target.value));
     const cap = (v) => { this.fpsCap = parseInt(v) || 0; $('o-cap').value = $('p-cap').value = String(this.fpsCap); };
     $('o-cap').addEventListener('change', (e) => cap(e.target.value)); $('p-cap').addEventListener('change', (e) => cap(e.target.value));
-    const fullscreen = (on) => { try { if (on && !document.fullscreenElement) document.documentElement.requestFullscreen({ navigationUI: 'hide' }).catch(() => {}); else if (!on && document.fullscreenElement) document.exitFullscreen().catch(() => {}); } catch (e) { /* fullscreen not permitted */ } };
+    const de = document.documentElement, fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
+    const canFS = !!(de.requestFullscreen || de.webkitRequestFullscreen);
+    const fullscreen = (on) => {
+      try {
+        if (on && !fsEl()) { const r = de.requestFullscreen ? de.requestFullscreen({ navigationUI: 'hide' }) : de.webkitRequestFullscreen(); if (r && r.catch) r.catch(() => {}); }
+        else if (!on && fsEl()) { const r = document.exitFullscreen ? document.exitFullscreen() : document.webkitExitFullscreen(); if (r && r.catch) r.catch(() => {}); }
+      } catch (e) { /* fullscreen not permitted */ }
+    };
+    // iPhone Safari has no element fullscreen: hide the option and suggest installing to the Home Screen instead
+    if (!canFS) { $('o-fs').closest('label').style.display = 'none'; $('b-fs').style.display = 'none'; }
+    const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+    const standalone = navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches);
+    if (this.device.touch && !standalone) $('mobilehelp').innerHTML += ios ? '<br><b>Fullscreen on iPhone/iPad:</b> tap Share &#8594; <b>Add to Home Screen</b>, then open Alpine GP from the Home Screen.' : '<br>Tip: browser menu &#8594; <b>Add to Home screen / Install app</b> to play fullscreen.';
     $('b-fs').addEventListener('click', () => fullscreen(!document.fullscreenElement));
     $('b-start').addEventListener('click', () => {
       this.audio.init(); vol();
       if ($('o-fs').value === '1') fullscreen(true); // exclusive-style fullscreen gives the browser's best frame pacing
+      if (this.device.touch) { try { screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape').catch(() => {}); } catch (e) { /* not supported */ } }
       const S = this.settings;
       S.laps = clamp(parseInt($('o-laps').value) || 3, 1, 30); S.ai = parseInt($('o-ai').value); S.diff = parseFloat($('o-diff').value);
       S.trans = $('o-trans').value; S.abs = $('o-abs').value === '1'; S.tc = $('o-tc').value === '1'; S.bias = $('o-bias').value / 100;
@@ -283,7 +376,7 @@ class Game {
     $('b-menu').addEventListener('click', () => this.toMenu());
     $('b-again').addEventListener('click', () => { $('results').classList.add('hidden'); this.startSession(); });
     $('b-menu2').addEventListener('click', () => { $('results').classList.add('hidden'); this.toMenu(); });
-    $('p-quality').addEventListener('change', (e) => this.setQuality(e.target.value));
+    $('p-quality').addEventListener('change', (e) => { this.userPickedQuality = true; this.setQuality(e.target.value); });
     $('p-dynres').addEventListener('change', (e) => { this.dynRes = e.target.value === '1'; if (!this.dynRes) this.applyRes(1); });
     $('p-abs').addEventListener('change', (e) => { this.settings.abs = e.target.value === '1'; if (this.player) this.player.phys.assist.abs = this.settings.abs; });
     $('p-tc').addEventListener('change', (e) => { this.settings.tc = e.target.value === '1'; if (this.player) this.player.phys.assist.tc = this.settings.tc; });
@@ -294,9 +387,12 @@ class Game {
   syncPause() {
     const $ = (id) => document.getElementById(id), v = this.audio.vol;
     $('p-master').value = Math.round(v.master * 100); $('p-engine').value = Math.round(v.engine * 100); $('p-fx').value = Math.round(v.fx * 100); $('p-mute').value = v.mute ? '1' : '0';
+    $('p-auto').value = this.autoQuality ? '1' : '0';
     $('p-abs').value = this.settings.abs ? '1' : '0'; $('p-tc').value = this.settings.tc ? '1' : '0'; $('p-quality').value = this.quality; $('p-dynres').value = this.dynRes ? '1' : '0';
   }
   flash(t, s) { this.hud.message(t, s); }
+  // vibration on impacts (Android browsers; iOS Safari has no Vibration API, so this is a no-op there)
+  haptic(v) { const now = performance.now(); if (!this.device.touch || !navigator.vibrate || now - (this._hapT || 0) < 150) return; this._hapT = now; try { navigator.vibrate(Math.round(clamp(v * 4, 15, 90))); } catch (e) { /* blocked */ } }
   pause(on) {
     if (!this.inSession) return;
     this.paused = on; this.syncPause();
@@ -307,6 +403,7 @@ class Game {
   toMenu() {
     this.inSession = false; this.paused = false; this.audio.silence();
     document.getElementById('pause').classList.add('hidden'); document.getElementById('menu').classList.remove('hidden'); this.hud.show(false);
+    document.getElementById('touch').classList.add('hidden'); document.getElementById('rotate').classList.add('hidden');
     this.clearCars();
   }
   action(a) {
@@ -388,6 +485,8 @@ class Game {
     this.rig.init = false; this.rig.mode = 'chase';
     this.inSession = true; this.paused = false; this.acc = 0; this.input.reset();
     this.hud.show(true);
+    document.getElementById('touch').classList.toggle('hidden', !this.device.touch);
+    document.getElementById('rotate').classList.toggle('hidden', !(this.device.touch && window.innerHeight > window.innerWidth));
     if (S.mode !== 'race') this.flash(S.mode === 'tt' ? 'TIME TRIAL' : 'FREE DRIVE', S.mode === 'tt' ? (this.pb ? 'PERSONAL BEST ' + fmtTime(this.pb.lap) : 'SET A LAP TIME') : 'EXPLORE THE CIRCUIT');
     else this.flash('GRID', 'HOLD STILL UNTIL LIGHTS OUT');
     this.towerT = 0;
@@ -452,7 +551,7 @@ class Game {
           imp.multiplyScalar(-1);
           if (B.isPlayer) B.phys.applyImpulse(imp, b); else B.phys.applyImpulse(imp);
           if (A.isPlayer || B.isPlayer) {
-            if (-vn > 1.5) { this.audio.oneshot('impact', clamp(-vn / 15, 0, 1)); const m = a.clone().add(b).multiplyScalar(0.5); for (let k = 0; k < 12; k++) this.sparks.spawn(m.x, m.y + 0.2, m.z, (Math.random() - .5) * 8, Math.random() * 4, (Math.random() - .5) * 8, 0.35, 0.05, 0.02, 1, 0.7, 0.3, 1, 1.5, 9.8); }
+            if (-vn > 1.5) { this.audio.oneshot('impact', clamp(-vn / 15, 0, 1)); this.haptic(-vn); const m = a.clone().add(b).multiplyScalar(0.5); for (let k = 0; k < 12; k++) this.sparks.spawn(m.x, m.y + 0.2, m.z, (Math.random() - .5) * 8, Math.random() * 4, (Math.random() - .5) * 8, 0.35, 0.05, 0.02, 1, 0.7, 0.3, 1, 1.5, 9.8); }
           }
         }
       }
@@ -521,7 +620,7 @@ class Game {
     // physics-driven events
     for (const ev of ph.events) { if (ev === 'upshift' || ev === 'downshift') this.audio.oneshot('shift'); if (ev === 'backfire') this.audio.oneshot('backfire'); if (ev === 'denied') this.audio.oneshot('denied'); if (ev === 'reset') this.flash('CAR RESET', ''); }
     for (const sp of ph.sparks) for (let k = 0; k < 3; k++) this.sparks.spawn(sp.p.x, sp.p.y + 0.02, sp.p.z, sp.v.x * 0.6 + (Math.random() - .5) * 4, Math.random() * 2.5, sp.v.z * 0.6 + (Math.random() - .5) * 4, 0.25 + Math.random() * 0.25, 0.045, 0.02, 1, 0.75, 0.35, 1, 1.2, 9.8);
-    for (const c of ph.collisions) { this.audio.oneshot('impact', clamp(c.v / 15, 0, 1)); for (let k = 0; k < 10; k++) this.sparks.spawn(c.p.x, c.p.y + 0.3, c.p.z, (c.n.x + (Math.random() - .5)) * 6, Math.random() * 3, (c.n.z + (Math.random() - .5)) * 6, 0.4, 0.05, 0.02, 1, 0.75, 0.35, 1, 1.2, 9.8); }
+    for (const c of ph.collisions) { this.audio.oneshot('impact', clamp(c.v / 15, 0, 1)); this.haptic(c.v); for (let k = 0; k < 10; k++) this.sparks.spawn(c.p.x, c.p.y + 0.3, c.p.z, (c.n.x + (Math.random() - .5)) * 6, Math.random() * 3, (c.n.z + (Math.random() - .5)) * 6, 0.4, 0.05, 0.02, 1, 0.75, 0.35, 1, 1.2, 9.8); }
     // tyre smoke, dust and skid marks for every car
     for (const c of this.cars) {
       const P = c.phys;
@@ -556,8 +655,10 @@ class Game {
   menuInfo(dt) {
     this._miT = (this._miT || 0) - dt; if (this._miT > 0) return; this._miT = 1;
     const P = this.perf, el = document.getElementById('perfinfo'); if (!el) return;
-    const warn = P.refreshHz < 240 ? ` · Note: browsers cap rendering at the display refresh rate, so this screen cannot exceed ${P.refreshHz} FPS` : '';
-    el.textContent = `Display ${P.refreshHz} Hz · GPU: ${this.gpuName.replace(/^ANGLE \(|\)$/g, '')} · GPU timer ${P.ext ? 'available' : 'unavailable'}${warn}`;
+    // high-end GPU on a 60 Hz screen: the High preset looks better than the 240 FPS one
+    if (P.n >= 120 && !this.userPickedQuality && this.device.tier === 4 && !this._tierChecked) { this._tierChecked = true; const want = P.refreshHz >= 120 ? 'competitive' : 'high'; if (want !== this.quality) this.setQuality(want); }
+    const d = this.device, c = this.caps;
+    el.textContent = `Detected: ${this.gpuName.replace(/^ANGLE \(|\)$/g, '')} · ${d.cores} CPU threads · ${c.gl2 ? 'WebGL2' : 'WebGL1'}${c.floatRT ? '' : ' (no HDR targets)'} · display ${P.refreshHz} Hz · tier ${d.tier}/4 → ${QUALITY_NAME[this.quality]}${d.software ? ' · Software rendering: enable hardware acceleration for much better speed' : ''}`;
   }
   menuOrbit(dt) {
     this.menuCam += dt * 0.04;
@@ -575,9 +676,20 @@ class Game {
     this._drT = (this._drT || 0) + dt; this._drCool = Math.max(0, (this._drCool || 0) - dt);
     if (!this.dynRes || this._drT < 0.5 || !this.inSession || this.paused) return;
     this._drT = 0;
-    const P = this.perf, target = this.fpsCap > 0 ? Math.min(this.fpsCap, P.refreshHz) : P.refreshHz;
+    const P = this.perf;
+    const target = Math.min(this.fpsCap > 0 ? this.fpsCap : 1000, P.refreshHz, this.Q.fpsTarget || 1000);
     const budget = 1000 / target, frame = this.frameMs, gpu = P.gpuMs, cpu = P.cpu.total;
     let s = this.resScale;
+    // Automatic preset step-down: if the machine cannot reach a playable rate even at the lowest
+    // render scale (GPU-bound) or the CPU alone exceeds the budget, switch to the next lower preset.
+    const floorMs = 1000 / Math.min(target, 50);
+    const stuck = frame > floorMs * 1.15 && (s <= this.minScale + 0.001 || cpu > floorMs * 0.85);
+    this._slowT = stuck ? (this._slowT || 0) + 0.5 : 0;
+    if (this.autoQuality && this._slowT >= 4 && QUALITY_DOWN[this.quality]) {
+      const next = QUALITY_DOWN[this.quality]; this._slowT = 0;
+      this.setQuality(next); this.flash('GRAPHICS ADJUSTED', QUALITY_NAME[next].toUpperCase() + ' FOR SMOOTHER FRAMES');
+      return;
+    }
     if (frame > budget * 1.08 && (gpu == null || gpu > budget * 0.8 || cpu < budget * 0.6)) { s -= frame > budget * 1.4 ? 0.12 : 0.06; this._drCool = 2.5; }
     else if (this._drCool <= 0) {
       if (gpu != null && gpu < budget * 0.68 && cpu < budget * 0.85) s += 0.05;
@@ -586,7 +698,7 @@ class Game {
     s = clamp(s, this.minScale, gpu != null ? this.maxScale : Math.min(1, this.maxScale));
     if (Math.abs(s - this.resScale) > 0.001) this.applyRes(s);
   }
-  applyRes(s) { this.resScale = s; const pr = this.basePixel * s; this.renderer.setPixelRatio(pr); this.composer.setPixelRatio(pr); this.composer.setSize(window.innerWidth, window.innerHeight); this.updateParticleScale(); }
+  applyRes(s) { this.resScale = s; const pr = this.basePixel * s; this.renderer.setPixelRatio(pr); if (this.composer) { this.composer.setPixelRatio(pr); this.composer.setSize(window.innerWidth, window.innerHeight); } this.updateParticleScale(); }
   render(dt) {
     // shadow camera follows the viewer
     const focus = this.inSession && this.player ? this.player.model.root.position : this.camera.position;
@@ -594,7 +706,7 @@ class Game {
     this._vegT = (this._vegT || 0) - dt; if (this._vegT <= 0) { this._vegT = 0.1; this.veg.update(this.camera.position); }
     this.dynamicResolution(dt);
     const tR = performance.now(); this.perf.beginGPU();
-    this.composer.render(dt);
+    if (this.composer) this.composer.render(dt); else this.renderer.render(this.scene, this.camera);
     this.perf.endGPU(); this.perf.add('render', performance.now() - tR);
     this.drawCalls = this.renderer.info.render.calls; this.drawTris = this.renderer.info.render.triangles;
   }

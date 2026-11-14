@@ -2,8 +2,17 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#07090d">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Alpine GP">
+<meta name="format-detection" content="telephone=no">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
 <title>Alpine Grand Prix</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23e10600'/%3E%3Cpath d='M3 11h10M5 8h6' stroke='white' stroke-width='2'/%3E%3C/svg%3E">
 <style>
 :root{
   --bg:#07090d; --panel:rgba(10,13,19,.78); --panel2:rgba(20,25,34,.86); --line:rgba(255,255,255,.10);
@@ -78,6 +87,39 @@ html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--
 #msg.show{opacity:1}
 #debug{position:absolute;left:260px;bottom:18px;padding:8px 12px;font:12px/1.45 var(--mono);white-space:pre;color:#c9f;min-width:290px}
 #camhint{position:absolute;right:18px;top:50%;font-size:11px;color:rgba(255,255,255,.5)}
+/* ---------- Touch controls (phones / tablets) ---------- */
+#touch{position:fixed;inset:0;pointer-events:none;z-index:5}
+#touch .tz{position:absolute;bottom:18px;width:min(17vw,120px);height:min(17vw,120px);border-radius:50%;background:rgba(255,255,255,.14);border:2px solid rgba(255,255,255,.35);color:#fff;font:800 15px var(--font);display:flex;align-items:center;justify-content:center;pointer-events:auto;touch-action:none;-webkit-tap-highlight-color:transparent}
+#touch .tz.on{background:rgba(255,255,255,.38)}
+#t-left{left:16px}#t-right{left:calc(16px + min(17vw,120px) + 14px)}
+#t-gas{right:16px;background:rgba(37,224,93,.25)!important;border-color:#25e05d}#t-brake{right:calc(16px + min(17vw,120px) + 14px);background:rgba(255,43,43,.25)!important;border-color:#ff2b2b}
+#t-gas.on{background:rgba(37,224,93,.6)!important}#t-brake.on{background:rgba(255,43,43,.6)!important}
+#touch .tbar{position:absolute;top:50%;right:12px;transform:translateY(-50%);display:flex;flex-direction:column;gap:8px}
+#touch .tb{pointer-events:auto;touch-action:none;padding:9px 12px;border-radius:8px;background:rgba(10,13,19,.7);border:1px solid rgba(255,255,255,.25);color:#fff;font:700 12px var(--font);text-align:center;-webkit-tap-highlight-color:transparent}
+body.touch #hud-bl,body.touch #hud-br #ped{display:none}
+body.touch #hud-br{bottom:auto;top:12px;right:12px}body.touch #hud-tr{display:none}
+body.touch #hud-bc{bottom:10px}
+body.touch #trans,body.touch #assist{display:none}body.touch #flags{min-width:0}
+body.touch #touch .tbar{top:auto;bottom:calc(min(17vw,120px) + 34px);transform:none}
+@media (max-height:520px){
+  body.touch #hud-tc{top:6px;transform:translateX(-50%) scale(.82);transform-origin:top center}
+  body.touch #hud-tl{top:8px;left:10px;transform:scale(.8);transform-origin:top left}
+  body.touch #hud-br{transform:scale(.8);transform-origin:top right}
+  body.touch #rpmbar{width:200px}body.touch #shift i{width:10px;height:6px}
+  body.touch #dash .gear{font-size:28px;width:40px}body.touch #dash .speed b{font-size:24px}body.touch #dash .speed,body.touch #dash .rpm{min-width:64px;padding:4px 8px}
+  body.touch #touch .tb{padding:6px 9px;font-size:11px}
+}
+#app{touch-action:none}
+body.touch{-webkit-touch-callout:none;overscroll-behavior:none}
+.card{touch-action:pan-y;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+/* notches / rounded corners (iPhone, Android punch-holes) */
+#touch .tz{bottom:calc(18px + env(safe-area-inset-bottom))}
+#t-left{left:calc(16px + env(safe-area-inset-left))}#t-right{left:calc(16px + env(safe-area-inset-left) + min(17vw,120px) + 14px)}
+#t-gas{right:calc(16px + env(safe-area-inset-right))}#t-brake{right:calc(16px + env(safe-area-inset-right) + min(17vw,120px) + 14px)}
+#touch .tbar{right:calc(12px + env(safe-area-inset-right))}
+body.touch #hud-tl{left:calc(10px + env(safe-area-inset-left))}body.touch #hud-br{right:calc(12px + env(safe-area-inset-right))}
+.touch-only{display:none}body.touch .touch-only{display:block}body.touch .keys-only{display:none}
+@media (max-height:520px){.card{padding:14px 18px}h1{font-size:26px}.sub{margin:4px 0 10px}h2{margin:10px 0 6px}.mode{padding:8px 10px}.mode b{font-size:14px}.btns{margin-top:12px}.btn{padding:10px 18px}}
 /* ---------- Menus ---------- */
 .screen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at 30% 20%,rgba(30,40,60,.55),rgba(3,4,7,.88));z-index:10}
 .card{background:rgba(12,15,22,.93);border:1px solid var(--line);border-radius:12px;padding:28px 32px;width:min(760px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;box-shadow:0 30px 80px rgba(0,0,0,.5)}
@@ -169,6 +211,13 @@ h2{font-size:13px;letter-spacing:.14em;color:var(--dim);text-transform:uppercase
   <div id="debug" class="panel hidden"></div>
 </div>
 
+<div id="touch" class="hidden">
+  <div class="tz" id="t-left">&#9664;</div><div class="tz" id="t-right">&#9654;</div>
+  <div class="tz" id="t-brake">BRAKE</div><div class="tz" id="t-gas">GAS</div>
+  <div class="tbar"><div class="tb" id="t-drs">DRS</div><div class="tb" id="t-cam">CAM</div><div class="tb" id="t-reset">RESET</div><div class="tb" id="t-pause">&#10073;&#10073;</div></div>
+</div>
+<div id="rotate" class="screen hidden"><div class="card" style="text-align:center;width:min(360px,calc(100vw - 32px))"><h1 style="font-size:28px">&#8635; Rotate</h1><div class="sub" style="margin-bottom:0">Turn your device sideways to race</div></div></div>
+
 <div id="loading" class="screen">
   <div class="card" style="width:min(480px,calc(100vw - 32px))">
     <h1>ALPINE <span>GRAND PRIX</span></h1>
@@ -193,7 +242,8 @@ h2{font-size:13px;letter-spacing:.14em;color:var(--dim);text-transform:uppercase
       <label class="field">Laps <input type="number" id="o-laps" min="1" max="30" value="3"></label>
       <label class="field">AI opponents <select id="o-ai"><option>5</option><option>6</option><option selected>7</option><option>9</option></select></label>
       <label class="field">AI difficulty <select id="o-diff"><option value="0.9">Amateur</option><option value="0.95" selected>Pro</option><option value="1.0">Legend</option></select></label>
-      <label class="field">Graphics <select id="o-quality"><option value="competitive">240 FPS Competitive</option><option value="high">High</option><option value="medium" selected>Medium</option><option value="performance">Performance</option></select></label>
+      <label class="field">Graphics <select id="o-quality"><option value="competitive">240 FPS Competitive</option><option value="high">High</option><option value="medium" selected>Medium</option><option value="performance">Low</option><option value="minimal">Ultra Low (old / integrated GPUs)</option></select></label>
+      <label class="field">Auto-adjust graphics <select id="o-auto"><option value="1" selected>On</option><option value="0">Off</option></select></label>
       <label class="field">Frame-rate cap <select id="o-cap"><option value="0" selected>Display refresh</option><option value="240">240</option><option value="165">165</option><option value="144">144</option><option value="120">120</option><option value="60">60</option></select></label>
       <label class="field">Fullscreen on start <select id="o-fs"><option value="1" selected>On</option><option value="0">Off</option></select></label>
       <label class="field">Transmission <select id="o-trans"><option value="auto">Automatic</option><option value="manual">Manual</option></select></label>
@@ -208,8 +258,9 @@ h2{font-size:13px;letter-spacing:.14em;color:var(--dim);text-transform:uppercase
       <label class="field">Effects <input type="range" id="o-fx" min="0" max="100" value="80"></label>
       <label class="field">Mute <select id="o-mute"><option value="0">Off</option><option value="1">On</option></select></label>
     </div>
-    <h2>Controls</h2>
-    <div class="keys">
+    <h2 class="keys-only">Controls</h2>
+    <div class="touch-only sub" id="mobilehelp" style="text-transform:none;letter-spacing:.02em">Touch: &#9664; &#9654; steer · GAS / BRAKE pedals · DRS, CAM, RESET and pause buttons on the right. Hold the phone sideways.</div>
+    <div class="keys keys-only">
       <span><b>W/↑</b> Throttle</span><span><b>S/↓</b> Brake</span><span><b>A D/← →</b> Steer</span><span><b>F</b> DRS</span>
       <span><b>E / Q</b> Gear up/down</span><span><b>M</b> Auto/Manual</span><span><b>C</b> Camera</span><span><b>R</b> Reset car</span>
       <span><b>Esc</b> Pause</span><span><b>N</b> Mute</span><span><b>F3 / `</b> Debug</span><span><b>Gamepad</b> supported</span>
@@ -224,7 +275,8 @@ h2{font-size:13px;letter-spacing:.14em;color:var(--dim);text-transform:uppercase
     <h1>PAUSED</h1>
     <div class="sub">Settings apply immediately</div>
     <div class="grid" style="grid-template-columns:1fr">
-      <label class="field">Graphics <select id="p-quality"><option value="competitive">240 FPS Competitive</option><option value="high">High</option><option value="medium">Medium</option><option value="performance">Performance</option></select></label>
+      <label class="field">Graphics <select id="p-quality"><option value="competitive">240 FPS Competitive</option><option value="high">High</option><option value="medium">Medium</option><option value="performance">Low</option><option value="minimal">Ultra Low (old / integrated GPUs)</option></select></label>
+      <label class="field">Auto-adjust graphics <select id="p-auto"><option value="1">On</option><option value="0">Off</option></select></label>
       <label class="field">Frame-rate cap <select id="p-cap"><option value="0">Display refresh</option><option value="240">240</option><option value="165">165</option><option value="144">144</option><option value="120">120</option><option value="60">60</option></select></label>
       <label class="field">Dynamic resolution <select id="p-dynres"><option value="1">On</option><option value="0">Off</option></select></label>
       <label class="field">ABS <select id="p-abs"><option value="1">On</option><option value="0">Off</option></select></label>
@@ -259,6 +311,10 @@ h2{font-size:13px;letter-spacing:.14em;color:var(--dim);text-transform:uppercase
 <script>
 // Non-module watchdog: reports CDN / module failures that would otherwise be silent.
 window.__agpErrors = [];
+// iOS Safari ignores user-scalable=no: block pinch / double-tap zoom gestures explicitly
+['gesturestart', 'gesturechange', 'gestureend'].forEach(function (t) { document.addEventListener(t, function (e) { e.preventDefault(); }, { passive: false }); });
+var __lastTouchEnd = 0;
+document.addEventListener('touchend', function (e) { var n = Date.now(); if (n - __lastTouchEnd < 300 && !(e.target.closest && e.target.closest('input,select,textarea,button,label,a'))) e.preventDefault(); __lastTouchEnd = n; }, { passive: false });
 window.__agpFail = function (msg) {
   var e = document.getElementById('error'); var t = document.getElementById('errtxt');
   if (t) t.textContent = String(msg); if (e) e.classList.remove('hidden');
@@ -276,11 +332,11 @@ window.addEventListener('unhandledrejection', function (ev) {
 });
 setTimeout(function () {
   if (!window.__agpModuleStarted) window.__agpFail('The Three.js module could not be loaded from the CDN (cdn.jsdelivr.net).\nCheck your internet connection or content blockers, then reload.');
-}, 20000);
+}, 45000);
 (function () {
   var c = document.createElement('canvas'); var gl = null;
-  try { gl = c.getContext('webgl2'); } catch (e) {}
-  if (!gl) window.__agpFail('WebGL2 is not available in this browser or it is disabled.\nEnable hardware acceleration or use a current Chrome, Edge, Firefox or Safari.');
+  try { gl = c.getContext('webgl2') || c.getContext('webgl') || c.getContext('experimental-webgl'); } catch (e) {}
+  if (!gl) window.__agpFail('WebGL is not available in this browser or it is disabled.\nEnable hardware acceleration (or update the graphics driver) and use a current Chrome, Edge, Firefox or Safari.');
   window.__agpNoGL = !gl;
 })();
 </script>

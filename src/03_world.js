@@ -368,7 +368,7 @@ class Vegetation {
       const d = T.trackDist(x, z); const ny = T.normalY(x, z);
       return { h, d, ny };
     };
-    const attempts = 150000;
+    const attempts = Math.round(150000 * (this.budget || 1));
     for (let k = 0; k < attempts; k++) {
       const x = T.x0 + 40 + r() * (T.size - 80), z = T.z0 + 40 + r() * (T.size - 80);
       const f = T.forest(x, z); const rr = r();
@@ -416,7 +416,8 @@ class Vegetation {
     // grass tufts: dense near the circuit verges, LOD-culled by distance
     const grassMat = windMaterial({ vertexColors: true, roughness: 0.9, side: THREE.DoubleSide }, 0.25);
     const gg = VegGeo.grass(); const gl = [];
-    for (let k = 0; k < 70000 && gl.length < 26000; k++) {
+    const gMax = Math.round(26000 * (this.budget || 1));
+    for (let k = 0; k < 70000 && gl.length < gMax; k++) {
       const i = Math.floor(r() * this.track.N), side = r() < 0.5 ? 1 : -1;
       const wall = side > 0 ? this.track.wallL[i] : this.track.wallR[i], verge = side > 0 ? this.track.vergeL[i] : this.track.vergeR[i];
       const ty = side > 0 ? this.track.typeL[i] : this.track.typeR[i];
